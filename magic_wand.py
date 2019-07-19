@@ -21,18 +21,19 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsProject, QgsMapLayer
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QSize
+from qgis.PyQt.QtGui import QIcon, QImage, QPainter
+from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.core import QgsProject, QgsMapLayer, QgsRectangle, QgsPoint, QgsMultiBandColorRenderer, QgsRaster, QgsMapSettings, QgsMapRendererCustomPainterJob
 # Initialize Qt resources from file resources.py
 from .resources import *
 
 # Import the code for the DockWidget
 from .magic_wand_dockwidget import MagicwandDockWidget
-import os.path
+import os.path, io
 
 from .Utils import ClickTool
+from .image_analyzer import ImageAnalyzer
 
 
 class Magicwand:
@@ -48,6 +49,8 @@ class Magicwand:
         """
         # Save reference to the QGIS interface
         self.iface = iface
+
+        self.canvas = iface.mapCanvas()
 
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
@@ -212,24 +215,43 @@ class Magicwand:
     #--------------------------------------------------------------------------
 
     def click_action(self, point):
-
         print(point)
+        
+        mapSettings = self.iface.mapCanvas().mapSettings()
+        image = self.make_image(mapSettings)
+        
+        image_analyzer = ImageAnalyzer(image)
+        print(image_analyzer.get_rgb(point))
+        #image has graphic data rendered in mapcanvas
+
         return
+
+    #make and return QImage from MapCanvas
+    def make_image(self, mapSettings):
+        image = QImage(mapSettings.outputSize(), QImage.Format_RGB32)
+
+        p = QPainter()
+        p.begin(image)
+        mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
+        mapRenderer.start()
+        mapRenderer.waitForFinished()
+        p.end()
+
+        return image
 
     def enable_magicwand(self):
         ct = ClickTool(self.iface,  self.click_action)
         self.previous_map_tool = self.iface.mapCanvas().mapTool()
         self.iface.mapCanvas().setMapTool(ct)
 
-    def initGUI(self):
+    def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
         layers = QgsProject.instance().mapLayers()
         layer_list = []
         for key, layer in layers.items():
             if layer.type() == QgsMapLayer.RasterLayer:
-                layer_list.append(layer.name())
-        self.dockwidget.layerComboBox.addItems(layer_list)
-        
+                self.dockwidget.layerComboBox.addItem(layer.name(),key)
+
     def run(self):
         """Run method that loads and starts the plugin"""
 
@@ -253,5 +275,5 @@ class Magicwand:
             self.iface.addDockWidget(Qt.TopDockWidgetArea, self.dockwidget)
             self.dockwidget.show()
 
-            self.initGUI()
+            self.reload_combo_box()
             self.enable_magicwand()

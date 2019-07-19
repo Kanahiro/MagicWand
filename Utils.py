@@ -1,5 +1,6 @@
 from qgis.core import *
 from qgis.gui import *
+from qgis.PyQt.QtCore import QPoint
 
 class ClickTool(QgsMapTool):
     def __init__(self, iface, callback):
@@ -12,19 +13,19 @@ class ClickTool(QgsMapTool):
 
     def canvasPressEvent(self,e):
         self.drugging = True
-        point = self.canvas.getCoordinateTransform().toMapPoint(e.pos().x(),e.pos().y())
+        point = QPoint(e.pos().x(),e.pos().y())
         self.callback(point)
         return None
 
     def canvasMoveEvent(self,e):
         if self.drugging == False:
             return None
-        point = self.canvas.getCoordinateTransform().toMapPoint(e.pos().x(),e.pos().y())
+        point = QPoint(e.pos().x(),e.pos().y())
         self.callback(point)
         return None
 
     def canvasReleaseEvent(self,e):
-        point = self.canvas.getCoordinateTransform().toMapPoint(e.pos().x(),e.pos().y())
+        point = QPoint(e.pos().x(),e.pos().y())
         self.callback(point)
         self.drugging = False
         return None
