@@ -222,6 +222,7 @@ class Magicwand:
         
         image_analyzer = ImageAnalyzer(image)
         print(image_analyzer.get_rgb(point))
+        bin_ndarray = image_analyzer.to_binary(point)
         #image has graphic data rendered in mapcanvas
 
         return
