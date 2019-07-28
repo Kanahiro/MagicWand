@@ -16,7 +16,7 @@ class ClickTool(QgsMapTool):
         point = QPoint(e.pos().x(),e.pos().y())
         self.callback(point)
         return None
-
+'''
     def canvasMoveEvent(self,e):
         if self.drugging == False:
             return None
@@ -29,3 +29,4 @@ class ClickTool(QgsMapTool):
         self.callback(point)
         self.drugging = False
         return None
+'''

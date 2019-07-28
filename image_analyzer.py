@@ -1,10 +1,3 @@
-import os
-
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import QgsProject, QgsMapLayer, QgsRectangle, QgsPoint, QgsMultiBandColorRenderer, QgsRaster
-
 import numpy as np
 
 class ImageAnalyzer:
@@ -29,7 +22,7 @@ class ImageAnalyzer:
         #then ndarray is [[x1y1, x2y1 ... xny1],
         #                 [x1y2, x2y2 ... xny2],
         #                 [x1yn, x2yn ... xnyn]]
-        #xnyn = [blue, green, red]
+        #xnyn = [blue, green, red, alpha]
 
     def to_binary(self, point, threshold=50):
         red, green, blue = self.get_rgb(point)
@@ -39,14 +32,9 @@ class ImageAnalyzer:
         true_index = sum_ndarray < threshold
         return true_index
 
-
     def get_rgb(self, point):
         pixelColor = self.image.pixelColor(point.x(), point.y())
         red_value = pixelColor.red()
         green_value = pixelColor.green()
         blue_value = pixelColor.blue()
         return (red_value, green_value, blue_value)
-
-    def make_polygon(self, point):
-        polygon = None
-        return polygon

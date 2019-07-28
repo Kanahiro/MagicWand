@@ -34,6 +34,7 @@ import os.path, io
 
 from .Utils import ClickTool
 from .image_analyzer import ImageAnalyzer
+from .polygon_maker import PolygonMaker
 
 
 class Magicwand:
@@ -78,6 +79,8 @@ class Magicwand:
 
         self.pluginIsActive = False
         self.dockwidget = None
+
+        self.output_layer = None
 
 
     # noinspection PyMethodMayBeStatic
@@ -215,29 +218,27 @@ class Magicwand:
     #--------------------------------------------------------------------------
 
     def click_action(self, point):
-        print(point)
-        
         mapSettings = self.iface.mapCanvas().mapSettings()
         image = self.make_image(mapSettings)
         
         image_analyzer = ImageAnalyzer(image)
-        print(image_analyzer.get_rgb(point))
-        bin_ndarray = image_analyzer.to_binary(point)
-        #image has graphic data rendered in mapcanvas
+        bin_index = image_analyzer.to_binary(point)
+
+        polygon_maker = PolygonMaker(self.iface.mapCanvas(), bin_index)
+        single_mode = self.dockwidget.single_mode.isChecked()
+        polygon_maker.make_vector(point, single_mode=single_mode)
 
         return
 
     #make and return QImage from MapCanvas
     def make_image(self, mapSettings):
-        image = QImage(mapSettings.outputSize(), QImage.Format_RGB32)
-
+        image = QImage(mapSettings.outputSize(), QImage.Format_RGB16)
         p = QPainter()
         p.begin(image)
         mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
         mapRenderer.start()
         mapRenderer.waitForFinished()
         p.end()
-
         return image
 
     def enable_magicwand(self):
@@ -247,10 +248,11 @@ class Magicwand:
 
     def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
+        self.dockwidget.layerComboBox.addItem('===New Layer===',0)
         layers = QgsProject.instance().mapLayers()
-        layer_list = []
         for key, layer in layers.items():
-            if layer.type() == QgsMapLayer.RasterLayer:
+            if layer.type() == QgsMapLayer.VectorLayer:
+                #key is Address to each layers
                 self.dockwidget.layerComboBox.addItem(layer.name(),key)
 
     def run(self):
