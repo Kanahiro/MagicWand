@@ -4,17 +4,18 @@ class ImageAnalyzer:
     def __init__(self, image):
         self.image = image
 
-    def to_ndarray(self):
-        image = self.image.convertToFormat(4)
+    def to_ndarray(self, resize_multiply=0.2):
+        scaled_img = self.resize(self.image, resize_multiply).convertToFormat(4)
 
-        width = image.width()
-        height = image.height()
+        width = scaled_img.width()
+        height = scaled_img.height()
 
-        ptr = image.constBits()
-        ptr.setsize(image.byteCount())
-        arr = np.array(ptr).reshape(height, width, 4)
-        return arr
-        #arr structure
+        ptr = scaled_img.constBits()
+        ptr.setsize(scaled_img.byteCount())
+        arr_rgba = np.array(ptr).reshape(height, width, 4)
+        arr_rgb = np.delete(arr_rgba, 3, 2)
+        return arr_rgb
+        #arr_rgb structure
         #img = x1y1 x2y1 ... xny1
         #      x1y2 x2y2 ... xny2
         #            ...
@@ -22,14 +23,19 @@ class ImageAnalyzer:
         #then ndarray is [[x1y1, x2y1 ... xny1],
         #                 [x1y2, x2y2 ... xny2],
         #                 [x1yn, x2yn ... xnyn]]
-        #xnyn = [blue, green, red, alpha]
+        #xnyn = [blue, green, red]
+
+    def resize(self, image, resize_multiply):
+        scaled_img = image.scaled(image.width() * resize_multiply, image.height() * resize_multiply, True, False)
+        return scaled_img
 
     def to_binary(self, point, threshold=50):
         red, green, blue = self.get_rgb(point)
         img_ndarray = self.to_ndarray()
-        abs_ndarray = abs(img_ndarray - [blue, green, red, 255])
+        abs_ndarray = abs(img_ndarray - [blue, green, red])
         sum_ndarray = abs_ndarray.sum(axis=2)
-        true_index = sum_ndarray < threshold
+        min_ndarray = abs_ndarray.min(axis=2)
+        true_index = sum_ndarray + min_ndarray < threshold
         return true_index
 
     def get_rgb(self, point):

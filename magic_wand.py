@@ -232,7 +232,7 @@ class Magicwand:
 
     #make and return QImage from MapCanvas
     def make_image(self, mapSettings):
-        image = QImage(mapSettings.outputSize(), QImage.Format_RGB16)
+        image = QImage(mapSettings.outputSize(), QImage.Format_RGB32)
         p = QPainter()
         p.begin(image)
         mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
