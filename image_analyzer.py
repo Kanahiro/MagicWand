@@ -4,7 +4,7 @@ class ImageAnalyzer:
     def __init__(self, image):
         self.image = image
 
-    def to_ndarray(self, resize_multiply=0.2):
+    def to_ndarray(self, resize_multiply):
         scaled_img = self.resize(self.image, resize_multiply).convertToFormat(4)
 
         width = scaled_img.width()
@@ -29,13 +29,13 @@ class ImageAnalyzer:
         scaled_img = image.scaled(image.width() * resize_multiply, image.height() * resize_multiply, True, False)
         return scaled_img
 
-    def to_binary(self, point, threshold=50):
+    def to_binary(self, point, resize_multiply=0.2, threshold=50):
         red, green, blue = self.get_rgb(point)
-        img_ndarray = self.to_ndarray()
+        img_ndarray = self.to_ndarray(resize_multiply)
         abs_ndarray = abs(img_ndarray - [blue, green, red])
         sum_ndarray = abs_ndarray.sum(axis=2)
         min_ndarray = abs_ndarray.min(axis=2)
-        true_index = sum_ndarray + min_ndarray < threshold
+        true_index = sum_ndarray + min_ndarray * 2 < threshold
         return true_index
 
     def get_rgb(self, point):

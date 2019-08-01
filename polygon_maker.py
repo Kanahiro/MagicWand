@@ -7,7 +7,7 @@ class PolygonMaker:
         self.bin_index = bin_index
         self.map_canvas = canvas
 
-    def make_vector(self, point, buffer_multiply=1, torel_multiply=1, noise_multiply=10, single_mode=False):
+    def make_vector(self, point, buffer_multiply=1, torel_multiply=1, noise_multiply=10, single_mode=False, layer_id=None):
         true_points = np.where(self.bin_index)
         func = lambda x, y, size: self.rect_geo(x, y, size)
         np_func = np.frompyfunc(func,3,1)
@@ -38,11 +38,16 @@ class PolygonMaker:
             output_feature.setGeometry(output_geo)
             output_features.append(output_feature)
         
-        output_layer = QgsVectorLayer('Polygon?crs=epsg:4326&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
-        output_layer_provider = output_layer.dataProvider()
-        output_layer_provider.addFeatures(output_features)
-        
-        QgsProject.instance().addMapLayer(output_layer)
+        if layer_id:
+            output = QgsProject.instance().mapLayer(layer_id)
+            if not output:
+                output = QgsVectorLayer('Polygon?crs=epsg:4326&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')    
+        else:
+            output = QgsVectorLayer('Polygon?crs=epsg:4326&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
+        output_provider = output.dataProvider()
+        output_provider.addFeatures(output_features)
+    
+        QgsProject.instance().addMapLayer(output)
 
     #make rectangle geometry by pointXY on Pixels
     def rect_geo(self, x, y, size_multiply):

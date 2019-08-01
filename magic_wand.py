@@ -30,7 +30,7 @@ from .resources import *
 
 # Import the code for the DockWidget
 from .magic_wand_dockwidget import MagicwandDockWidget
-import os.path, io
+import os.path
 
 from .Utils import ClickTool
 from .image_analyzer import ImageAnalyzer
@@ -150,6 +150,7 @@ class Magicwand:
         """
 
         icon = QIcon(icon_path)
+        text = "Magic Wand"
         action = QAction(icon, text, parent)
         action.triggered.connect(callback)
         action.setEnabled(enabled_flag)
@@ -217,17 +218,26 @@ class Magicwand:
 
     #--------------------------------------------------------------------------
 
+    #actions on mapcanvas clicked
     def click_action(self, point):
         mapSettings = self.iface.mapCanvas().mapSettings()
         image = self.make_image(mapSettings)
-        
         image_analyzer = ImageAnalyzer(image)
-        bin_index = image_analyzer.to_binary(point)
+        #get slider value
+        resize_multiply = self.dockwidget.accuracy_slider.value() / 100
+        threshold = 100 - self.dockwidget.threshold_slider.value()
+        bin_index = image_analyzer.to_binary(point, resize_multiply, threshold)
 
         polygon_maker = PolygonMaker(self.iface.mapCanvas(), bin_index)
         single_mode = self.dockwidget.single_mode.isChecked()
-        polygon_maker.make_vector(point, single_mode=single_mode)
+        selected_layer_id = self.dockwidget.layerComboBox.currentData()
+        polygon_maker.make_vector(point, single_mode=single_mode, layer_id=selected_layer_id)
 
+        selected_index = self.dockwidget.layerComboBox.currentIndex()
+        self.reload_combo_box()
+        self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
+        self.canvas.refreshAllLayers()
+        
         return
 
     #make and return QImage from MapCanvas
@@ -246,13 +256,24 @@ class Magicwand:
         self.previous_map_tool = self.iface.mapCanvas().mapTool()
         self.iface.mapCanvas().setMapTool(ct)
 
+    def init_sliders(self):
+        self.dockwidget.accuracy_slider.setMinimum(20)
+        self.dockwidget.accuracy_slider.setMaximum(100)
+        self.dockwidget.accuracy_slider.setSingleStep(20)
+        self.dockwidget.accuracy_slider.setValue(60)
+
+        self.dockwidget.threshold_slider.setMinimum(10)
+        self.dockwidget.threshold_slider.setMaximum(90)
+        self.dockwidget.threshold_slider.setSingleStep(10)
+        self.dockwidget.threshold_slider.setValue(50)
+
     def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
         self.dockwidget.layerComboBox.addItem('===New Layer===',0)
         layers = QgsProject.instance().mapLayers()
         for key, layer in layers.items():
             if layer.type() == QgsMapLayer.VectorLayer:
-                #key is Address to each layers
+                #key is ID of each layers
                 self.dockwidget.layerComboBox.addItem(layer.name(),key)
 
     def run(self):
@@ -274,9 +295,16 @@ class Magicwand:
             self.dockwidget.closingPlugin.connect(self.onClosePlugin)
 
             # show the dockwidget
-            # TODO: fix to allow choice of dock location
             self.iface.addDockWidget(Qt.TopDockWidgetArea, self.dockwidget)
             self.dockwidget.show()
 
+            ct = ClickTool(self.iface,  self.click_action)
+            self.previous_map_tool = self.iface.mapCanvas().mapTool()
+            self.iface.mapCanvas().setMapTool(ct)
+
+            self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
+
+            QgsProject.instance().layersAdded.connect(self.reload_combo_box)
+            QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
             self.reload_combo_box()
-            self.enable_magicwand()
+            self.init_sliders()

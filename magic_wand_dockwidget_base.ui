@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>232</width>
-    <height>141</height>
+    <width>342</width>
+    <height>119</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -16,21 +16,77 @@
   <widget class="QWidget" name="dockWidgetContents">
    <layout class="QGridLayout" name="gridLayout">
     <item row="0" column="0">
+     <widget class="QPushButton" name="enable_button">
+      <property name="text">
+       <string>Enable</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="1">
+     <widget class="QLabel" name="label">
+      <property name="text">
+       <string>Fast</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="0">
+     <widget class="QLabel" name="label_3">
+      <property name="text">
+       <string>Accuracy</string>
+      </property>
+     </widget>
+    </item>
+    <item row="2" column="0">
+     <widget class="QLabel" name="label_4">
+      <property name="text">
+       <string>Color Threshold</string>
+      </property>
+     </widget>
+    </item>
+    <item row="2" column="1">
+     <widget class="QLabel" name="label_5">
+      <property name="text">
+       <string>Ambiguous</string>
+      </property>
+     </widget>
+    </item>
+    <item row="2" column="2">
+     <widget class="QSlider" name="threshold_slider">
+      <property name="orientation">
+       <enum>Qt::Horizontal</enum>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="2">
+     <widget class="QSlider" name="accuracy_slider">
+      <property name="orientation">
+       <enum>Qt::Horizontal</enum>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="3">
+     <widget class="QLabel" name="label_2">
+      <property name="text">
+       <string>Precise</string>
+      </property>
+     </widget>
+    </item>
+    <item row="0" column="3">
      <widget class="QCheckBox" name="single_mode">
       <property name="text">
        <string>Single Mode</string>
       </property>
      </widget>
     </item>
-      <item row="0" column="1">
-     <widget class="QSlider" name="threshold">
+    <item row="2" column="3">
+     <widget class="QLabel" name="label_6">
+      <property name="text">
+       <string>Strict</string>
+      </property>
      </widget>
     </item>
-    <item row="0" column="2">
-     <widget class="QComboBox" name="layerComboBox">
-      <item>
-      </item>
-     </widget>
+    <item row="0" column="1" colspan="2">
+     <widget class="QComboBox" name="layerComboBox"/>
     </item>
    </layout>
   </widget>
