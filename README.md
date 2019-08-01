@@ -10,3 +10,6 @@ QGIS plugin to make polygon easily and automatically by analyzing MapCanvas.
 - Single Mode enable you make ONE polygon around where you clicked.
 - Higher Accuracy needs so longer time that I recommend you use this plugin in Low Accuracy.
 - To make polygon apropriately, it is better adjust Saturation highly.
+
+#Contact
+kanahiro.iguchi@gmail.com
