@@ -1,5 +1,5 @@
 # MagicWand
-QGIS plugin to make polygon easily and automatically by analysing MapCanvas.
+QGIS plugin to make polygon easily and automatically by analyzing MapCanvas.
 
 # Sample
 ![QGIS/MagicWand](./img/sample.gif)
