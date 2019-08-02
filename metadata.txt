@@ -5,15 +5,15 @@
 [general]
 name=Magic Wand
 qgisMinimumVersion=3.0
-description=Auto-making Polygon by Raster analyzing
+description=Auto-making Polygon by MapCanvas
 version=1.0
 author=Kanahiro Iguchi
-email=https://twitter.com/kigchi999
+email=kanahiro.iguchi@gmail.com
 
 about=QGIS plugin to make polygon easily and automatically by analysing MapCanvas.
 
-tracker=http://bugs
-repository=http://repo
+tracker=https://github.com/Kanahiro/MagicWand
+repository=https://github.com/Kanahiro/MagicWand
 # End of mandatory metadata
 
 # Recommended items:
@@ -29,7 +29,7 @@ homepage=https://www.labo288.site/
 category=Vector
 icon=icon.png
 # experimental flag
-experimental=True
+experimental=False
 
 # deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
