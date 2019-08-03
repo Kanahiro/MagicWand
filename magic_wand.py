@@ -240,7 +240,7 @@ class Magicwand:
         self.dockwidget.accuracy_slider.setMaximum(100)
         self.dockwidget.accuracy_slider.setSingleStep(20)
         self.dockwidget.accuracy_slider.setValue(60)
-
+        
         self.dockwidget.threshold_slider.setMinimum(10)
         self.dockwidget.threshold_slider.setMaximum(90)
         self.dockwidget.threshold_slider.setSingleStep(10)

@@ -34,8 +34,8 @@ class ImageAnalyzer:
         img_ndarray = self.to_ndarray(resize_multiply)
         abs_ndarray = abs(img_ndarray - [blue, green, red])
         sum_ndarray = abs_ndarray.sum(axis=2)
-        min_ndarray = abs_ndarray.min(axis=2)
-        true_index = sum_ndarray + min_ndarray * 2 < threshold
+        max_ndarray = abs_ndarray.max(axis=2)
+        true_index = sum_ndarray + max_ndarray*0.5 < threshold
         return true_index
 
     def get_rgb(self, point):
