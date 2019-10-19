@@ -208,9 +208,11 @@ class Magicwand:
         bin_index = image_analyzer.to_binary(point, resize_multiply, threshold)
 
         polygon_maker = PolygonMaker(self.iface.mapCanvas(), bin_index)
+        project_crs = QgsProject.instance().crs()
         single_mode = self.dockwidget.single_mode.isChecked()
         selected_layer_id = self.dockwidget.layerComboBox.currentData()
-        polygon_maker.make_vector(point, single_mode=single_mode, layer_id=selected_layer_id)
+
+        polygon_maker.make_vector(point, crs=project_crs, single_mode=single_mode, layer_id=selected_layer_id)
 
         selected_index = self.dockwidget.layerComboBox.currentIndex()
         self.reload_combo_box()
