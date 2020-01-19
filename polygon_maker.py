@@ -7,7 +7,7 @@ class PolygonMaker:
         self.bin_index = bin_index
         self.map_canvas = canvas
 
-    def make_vector(self, point, crs, buffer_multiply=1, torel_multiply=3, noise_multiply=50, single_mode=False, layer_id=None):
+    def make_vector(self, point, crs, buffer_multiply=1, torel_multiply=3, noise_multiply=10, single_mode=False, layer_id=None):
         #make rectangles by the binary index
         true_points = np.where(self.bin_index)
         func = lambda x, y, size: self.rect_geo(x, y, size)
@@ -57,7 +57,7 @@ class PolygonMaker:
         output_provider.addFeatures(output_features)
 
         #delete holes of feature
-        cleaned_layer = processing.run('qgis:deleteholes', {'INPUT':output, 'MIN_AREA':minimum_area * noise_multiply * 10, 'OUTPUT':'memory:'})['OUTPUT']
+        cleaned_layer = processing.run('qgis:deleteholes', {'INPUT':output, 'MIN_AREA':minimum_area * noise_multiply, 'OUTPUT':'memory:'})['OUTPUT']
 
         QgsProject.instance().addMapLayer(cleaned_layer)
 
