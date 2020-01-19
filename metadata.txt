@@ -12,7 +12,7 @@ email=kanahiro.iguchi@gmail.com
 
 about=QGIS plugin to make polygon easily and automatically by analysing MapCanvas.
 
-tracker=https://github.com/Kanahiro/MagicWand
+tracker=https://github.com/Kanahiro/MagicWand/issues
 repository=https://github.com/Kanahiro/MagicWand
 # End of mandatory metadata
 
@@ -25,7 +25,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags=python
 
-homepage=https://www.labo288.site/
+homepage=https://kiguchi999.hatenablog.com/
 category=Vector
 icon=icon.png
 # experimental flag
