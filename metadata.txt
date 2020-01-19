@@ -6,7 +6,7 @@
 name=Magic Wand
 qgisMinimumVersion=3.0
 description=Auto-making Polygon by MapCanvas
-version=1.1
+version=1.2
 author=Kanahiro Iguchi
 email=kanahiro.iguchi@gmail.com
 
