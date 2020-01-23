@@ -49,7 +49,6 @@ class PolygonMaker:
             rect_feat = QgsFeature()
             rect_feat.setGeometry(geo)
             rect_layer_provider.addFeature(rect_feat)
-        QgsProject.instance().addMapLayer(rect_layer)
 
         #dissolve rectangles layer
         dissolved_layer = processing.run('qgis:dissolve', {'INPUT':rect_layer,'OUTPUT':'memory:'})['OUTPUT']
