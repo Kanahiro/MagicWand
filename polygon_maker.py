@@ -7,7 +7,7 @@ class PolygonMaker:
         self.bin_index = bin_index
         self.map_canvas = canvas
 
-    def make_vector(self, point, crs, torel_multiply=2, noise_multiply=60, single_mode=False, layer_id=None):
+    def make_vector(self, point, crs, torel_multiply=2, noise_multiply=40, single_mode=False, layer_id=None):
         size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
 
         #make 2d array including only TRUE pixel index
