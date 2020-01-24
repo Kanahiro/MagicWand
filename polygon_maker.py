@@ -92,7 +92,7 @@ class PolygonMaker:
         features_layer_provider.addFeatures(features)
         return features_layer
 
-    def noise_reduction(self, features, noise_multiply, torel_multiply=3):
+    def noise_reduction(self, features, noise_multiply, torel_multiply=2.5):
         output = []
         torelance = self.map_canvas.mapUnitsPerPixel() * torel_multiply * self.size_multiply ** 0.6
         for feature in features:
