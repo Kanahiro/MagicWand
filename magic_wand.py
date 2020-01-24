@@ -212,7 +212,7 @@ class Magicwand:
         single_mode = self.dockwidget.single_mode.isChecked()
         selected_layer_id = self.dockwidget.layerComboBox.currentData()
 
-        polygon_maker.make_vector(point, crs=project_crs, single_mode=single_mode, layer_id=selected_layer_id)
+        polygon_maker.make_polygons(point, crs=project_crs, single_mode=single_mode, layer_id=selected_layer_id)
 
         selected_index = self.dockwidget.layerComboBox.currentIndex()
         self.reload_combo_box()
