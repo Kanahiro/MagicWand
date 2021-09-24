@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QSize
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QSize, QLocale
 from qgis.PyQt.QtGui import QIcon, QImage, QPainter
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import QgsProject, QgsMapLayer, QgsRectangle, QgsPoint, QgsMultiBandColorRenderer, QgsRaster, QgsMapSettings, QgsMapRendererCustomPainterJob
+from qgis.core import QgsProject, QgsMapLayer, QgsRectangle, QgsPoint, QgsMultiBandColorRenderer, QgsRaster, QgsMapSettings, QgsMapRendererCustomPainterJob, QgsSettings
 # Initialize Qt resources from file resources.py
 from .resources import *
 
@@ -36,7 +36,7 @@ class Magicwand:
         self.plugin_dir = os.path.dirname(__file__)
 
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        locale = QgsSettings().value('locale/userLocale', QLocale().name())[0:2]
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
