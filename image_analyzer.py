@@ -26,7 +26,7 @@ class ImageAnalyzer:
         #xnyn = [blue, green, red]
 
     def resize(self, image, resize_multiply):
-        scaled_img = image.scaled(image.width() * resize_multiply, image.height() * resize_multiply, True, False)
+        scaled_img = image.scaled(int(image.width() * resize_multiply), int(image.height() * resize_multiply))
         return scaled_img
 
     def to_binary(self, point, resize_multiply=0.2, threshold=50):
