@@ -3,8 +3,7 @@ QGIS plugin to make polygon easily and automatically by analyzing MapCanvas.
 
 Supports QGIS 3.44 or later, including QGIS 4.x (Qt6).
 
-# Sample
-![QGIS/MagicWand](./img/sample.gif)
+https://github.com/user-attachments/assets/c086909c-a9dc-46dc-8622-d834eb156932*Japan GSI Seamlessphoto*
 
 # Usage
 - Click mapcanvas where you want to make polygon: a tentative polygon is shown semi-transparently, like the magic wand tool of image editors.
@@ -53,18 +52,3 @@ docker run --rm -v "$(pwd)":/plugin -w /plugin qgis/qgis:3.44 sh -c "
   xvfb-run -s '+extension GLX -screen 0 1024x768x24' python3 -m pytest tests/ -v
 "
 ```
-
-## Release
-
-Publishing a GitHub Release triggers `.github/workflows/release.yaml`, which
-zips the plugin, uploads it as a release asset, and uploads it to
-plugins.qgis.org (the release tag is written to `metadata.txt` as the version).
-
-Note: the top-level directory inside the uploaded ZIP must be named
-`MagicWand-master`. The plugin is registered on plugins.qgis.org under the
-package name `MagicWand-master` for historical reasons — releases used to be
-the GitHub-generated `master` branch ZIP — and uploads with any other
-package directory name are rejected.
-
-# Contact
-kanahiro.iguchi@gmail.com
