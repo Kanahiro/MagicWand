@@ -22,12 +22,12 @@ class PolygonMaker:
         self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
         self.noise_multiply = 40
 
-    def make_polygons(
-        self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
-    ) -> None:
+    def build_polygons(self, crs: QgsCoordinateReferenceSystem) -> list[QgsFeature]:
+        """Run the full pipeline and return the resulting features
+        without touching the project."""
         rects = self.make_rects()
         if not rects:
-            return
+            return []
         rects_layer = self.make_layer_by(rects, crs)
 
         dissolved_layer = processing.run(
@@ -41,7 +41,7 @@ class PolygonMaker:
 
         denoised_features = self.noise_reduction(single_features, self.noise_multiply)
         if not denoised_features:
-            return
+            return []
         denoised_layer = self.make_layer_by(denoised_features, crs)
         cleaned_layer = processing.run(
             "native:deleteholes",
@@ -53,7 +53,14 @@ class PolygonMaker:
                 "OUTPUT": "memory:",
             },
         )["OUTPUT"]
-        cleaned_features = list(cleaned_layer.getFeatures())
+        return list(cleaned_layer.getFeatures())
+
+    def make_polygons(
+        self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
+    ) -> None:
+        cleaned_features = self.build_polygons(crs)
+        if not cleaned_features:
+            return
 
         # output layer
         output = None

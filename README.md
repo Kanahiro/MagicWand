@@ -10,6 +10,7 @@ Supports QGIS 3.44 or later, including QGIS 4.x (Qt6).
 - Set Color Threshold, and Click mapcanvas where you want to make polygon.
 - A polygon is created from the area connected to the clicked point (flood fill), like the magic wand tool of image editors.
 - Colors are compared perceptually (CIELAB delta-E), and the selection follows smooth gradients (region growing) while sharp color edges stop it.
+- Enable Preview and hover over the map: after the cursor rests for a moment, the polygon that a click would create is shown semi-transparently.
 
 # Development
 

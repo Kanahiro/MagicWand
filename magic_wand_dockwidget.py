@@ -2,6 +2,7 @@
 
 from qgis.PyQt.QtCore import pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDockWidget,
     QGridLayout,
@@ -23,11 +24,13 @@ class MagicwandDockWidget(QDockWidget):
 
         self.enable_button = QPushButton("Enable")
         self.layerComboBox = QComboBox()
+        self.preview_checkbox = QCheckBox("Preview")
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
 
         layout = QGridLayout()
         layout.addWidget(self.enable_button, 0, 0)
-        layout.addWidget(self.layerComboBox, 0, 1, 1, 3)
+        layout.addWidget(self.layerComboBox, 0, 1, 1, 2)
+        layout.addWidget(self.preview_checkbox, 0, 3)
 
         layout.addWidget(QLabel("Color Threshold"), 1, 0)
         layout.addWidget(QLabel("Ambiguous"), 1, 1)

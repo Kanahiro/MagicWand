@@ -115,6 +115,29 @@ class TestNoiseReduction:
 
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
+class TestBuildPolygons:
+    def test_returns_features_without_touching_project(
+        self, canvas, polygon_maker_module
+    ):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+
+        features = maker.build_polygons(crs=CRS)
+
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(5400, rel=0.15)
+        # preview computation must not add layers to the project
+        assert len(QgsProject.instance().mapLayers()) == 0
+
+    def test_empty_mask_returns_no_features(self, canvas, polygon_maker_module):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+
+        assert maker.build_polygons(crs=CRS) == []
+
+
+@pytest.mark.usefixtures("native_processing", "qgis_new_project")
 class TestMakePolygons:
     def test_creates_new_layer_with_polygon(self, canvas, polygon_maker_module):
         bin_index = np.zeros((10, 20), dtype=bool)

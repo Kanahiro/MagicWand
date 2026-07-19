@@ -1,9 +1,10 @@
 import os.path
 
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
-from qgis.PyQt.QtGui import QIcon, QImage, QPainter
+from qgis.PyQt.QtCore import QSettings, QTimer, QTranslator, QCoreApplication, Qt
+from qgis.PyQt.QtGui import QColor, QIcon, QImage, QPainter
 from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsProject, QgsVectorLayer, QgsMapRendererCustomPainterJob
+from qgis.gui import QgsRubberBand
 
 # Import the code for the DockWidget
 from .magic_wand_dockwidget import MagicwandDockWidget
@@ -13,6 +14,11 @@ from .image_analyzer import ImageAnalyzer
 from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY
 
 NEW_LAYER_ITEM_DATA = 0
+
+# preview is computed only after the cursor has rested this long
+PREVIEW_DELAY_MS = 400
+PREVIEW_FILL_COLOR = QColor(255, 190, 0, 90)
+PREVIEW_STROKE_COLOR = QColor(255, 140, 0, 200)
 
 
 class Magicwand:
@@ -55,6 +61,10 @@ class Magicwand:
         self.dockwidget = None
         self.map_tool = None
         self.previous_map_tool = None
+
+        self.preview_timer = None
+        self.preview_point = None
+        self.rubber_band = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -159,6 +169,8 @@ class Magicwand:
     def onClosePlugin(self):
         """Cleanup necessary items here when plugin dockwidget is closed"""
 
+        self.clear_preview()
+
         # restore the map tool which was active before enabling Magic Wand
         if self.previous_map_tool is not None:
             self.canvas.setMapTool(self.previous_map_tool)
@@ -168,6 +180,11 @@ class Magicwand:
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+
+        self.clear_preview()
+        if self.rubber_band is not None:
+            self.canvas.scene().removeItem(self.rubber_band)
+            self.rubber_band = None
 
         try:
             QgsProject.instance().layersAdded.disconnect(self.reload_combo_box)
@@ -190,15 +207,18 @@ class Magicwand:
 
     # --------------------------------------------------------------------------
 
+    # build a PolygonMaker for the clicked/hovered canvas position
+    def polygon_maker_at(self, point):
+        image = self.make_image(self.canvas.mapSettings())
+        threshold = 100 - self.dockwidget.threshold_slider.value()
+        bin_index = ImageAnalyzer(image).to_binary(point, threshold)
+        return PolygonMaker(self.canvas, bin_index)
+
     # actions on mapcanvas clicked
     def click_action(self, point):
-        mapSettings = self.canvas.mapSettings()
-        image = self.make_image(mapSettings)
-        image_analyzer = ImageAnalyzer(image)
-        threshold = 100 - self.dockwidget.threshold_slider.value()
-        bin_index = image_analyzer.to_binary(point, threshold)
+        self.clear_preview()
 
-        polygon_maker = PolygonMaker(self.canvas, bin_index)
+        polygon_maker = self.polygon_maker_at(point)
         project_crs = QgsProject.instance().crs()
         selected_layer_id = self.dockwidget.layerComboBox.currentData()
 
@@ -208,6 +228,54 @@ class Magicwand:
         self.reload_combo_box()
         self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
         self.canvas.refreshAllLayers()
+
+    # ---------------------------------------------------------------- preview
+
+    def on_canvas_move(self, point):
+        """Debounce cursor moves: the preview is computed only after the
+        cursor has been stationary for PREVIEW_DELAY_MS."""
+        if self.dockwidget is None or not self.dockwidget.preview_checkbox.isChecked():
+            return
+        self.preview_point = point
+        self.hide_preview()
+        self.preview_timer.start(PREVIEW_DELAY_MS)
+
+    def show_preview(self):
+        if self.dockwidget is None or not self.dockwidget.preview_checkbox.isChecked():
+            return
+        if self.preview_point is None:
+            return
+
+        polygon_maker = self.polygon_maker_at(self.preview_point)
+        features = polygon_maker.build_polygons(QgsProject.instance().crs())
+
+        band = self.ensure_rubber_band()
+        band.reset(POLYGON_GEOMETRY)
+        for feature in features:
+            band.addGeometry(feature.geometry(), None)
+
+    def ensure_rubber_band(self):
+        if self.rubber_band is None:
+            self.rubber_band = QgsRubberBand(self.canvas, POLYGON_GEOMETRY)
+            self.rubber_band.setFillColor(PREVIEW_FILL_COLOR)
+            self.rubber_band.setStrokeColor(PREVIEW_STROKE_COLOR)
+            self.rubber_band.setWidth(2)
+        return self.rubber_band
+
+    def hide_preview(self):
+        if self.rubber_band is not None:
+            self.rubber_band.reset(POLYGON_GEOMETRY)
+
+    def clear_preview(self):
+        if self.preview_timer is not None:
+            self.preview_timer.stop()
+        self.hide_preview()
+
+    def on_preview_toggled(self, checked):
+        if not checked:
+            self.clear_preview()
+
+    # -------------------------------------------------------------------------
 
     # make and return QImage from MapCanvas
     def make_image(self, mapSettings):
@@ -224,7 +292,12 @@ class Magicwand:
         current_tool = self.canvas.mapTool()
         if current_tool is not None and current_tool is not self.map_tool:
             self.previous_map_tool = current_tool
-        self.map_tool = ClickTool(self.iface, self.click_action)
+        self.map_tool = ClickTool(
+            self.iface,
+            click_callback=self.click_action,
+            move_callback=self.on_canvas_move,
+            deactivated_callback=self.clear_preview,
+        )
         self.canvas.setMapTool(self.map_tool)
 
     def init_sliders(self):
@@ -259,10 +332,17 @@ class Magicwand:
                 # Create the dockwidget (after translation) and keep reference
                 self.dockwidget = MagicwandDockWidget()
                 self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
+                self.dockwidget.preview_checkbox.toggled.connect(
+                    self.on_preview_toggled
+                )
                 # connect to provide cleanup on closing of dockwidget
                 self.dockwidget.closingPlugin.connect(self.onClosePlugin)
                 QgsProject.instance().layersAdded.connect(self.reload_combo_box)
                 QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
+
+                self.preview_timer = QTimer(self.dockwidget)
+                self.preview_timer.setSingleShot(True)
+                self.preview_timer.timeout.connect(self.show_preview)
 
             # show the dockwidget
             self.iface.addDockWidget(

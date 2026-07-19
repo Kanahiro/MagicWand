@@ -27,6 +27,7 @@ changelog=2.0.0
     - Colors are compared perceptually in CIELAB (delta-E) instead of RGB distance
     - The selection grows over smooth color gradients (region growing) while sharp edges stop it
     - Remove the Accuracy slider; analysis resolution is now chosen automatically (full resolution, downscaled only on very large canvases)
+    - Add a Preview mode: hovering shows the would-be polygon semi-transparently after the cursor rests for a moment
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file
     - Use native: processing algorithms instead of deprecated qgis: ones
