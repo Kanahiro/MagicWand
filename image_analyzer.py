@@ -10,11 +10,14 @@ DELTA_E_PER_THRESHOLD = 0.3
 MAX_ANALYSIS_PIXELS = 2_000_000
 # region growing over smooth gradients may reach up to this multiple
 # of the tolerance away from the seed color
-GRADIENT_CAP_RATIO = 2.0
-# adjacent pixels are considered "smooth" if their delta-E is below
-# tolerance * this ratio; anti-aliased edges jump far above it
-EDGE_TOLERANCE_RATIO = 0.35
-MIN_EDGE_TOLERANCE = 2.0
+GRADIENT_CAP_RATIO = 1.5
+# adjacent pixels are considered part of the same smooth gradient when
+# their delta-E stays below this. True gradients step well below it per
+# screen pixel while anti-aliased edges between distinct colors jump far
+# above it. Deliberately NOT scaled with the threshold slider: a scaled
+# tolerance leaks through anti-aliased boundaries at loose thresholds
+# and floods region after region.
+EDGE_TOLERANCE = 2.5
 
 
 def bgr_to_lab(bgr: np.ndarray) -> np.ndarray:
@@ -127,7 +130,7 @@ class ImageAnalyzer:
         Anti-aliased boundaries between distinct colors produce large
         per-pixel steps, so they stop the growth naturally.
         """
-        edge_tolerance = max(MIN_EDGE_TOLERANCE, tolerance * EDGE_TOLERANCE_RATIO)
+        edge_tolerance = EDGE_TOLERANCE
         cap = delta_e_seed < tolerance * GRADIENT_CAP_RATIO
 
         # growth can never leave the connected cap area around the region,

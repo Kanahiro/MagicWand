@@ -156,19 +156,20 @@ class TestGradientGrowing:
     CAP = TOLERANCE * GRADIENT_CAP_RATIO  # 30
 
     def test_smooth_gradient_is_followed_beyond_tolerance(self):
-        # columns 0..59: smooth gray gradient 100 -> 159 (~0.4 dE per step);
-        # columns 60..79: flat 220 behind a sharp jump
-        values = [100 + x for x in range(60)] + [220] * 20
+        # columns 0..50: smooth gray gradient 100 -> 150 (~0.4 dE per step);
+        # remaining columns: flat 220 behind a sharp jump
+        gradient_width = 51
+        values = [100 + x for x in range(gradient_width)] + [220] * 20
         # total gradient span exceeds the plain tolerance but stays under the cap
-        assert self.TOLERANCE < gray_delta_e(100, 159) < self.CAP
-        image = gray_image(80, 10, values)
+        assert self.TOLERANCE < gray_delta_e(100, 150) < self.CAP
+        image = gray_image(len(values), 10, values)
 
         mask = ImageAnalyzer(image).to_binary(
             QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
         )
 
-        assert mask[:, :60].all()  # whole gradient selected
-        assert not mask[:, 60:].any()  # sharp edge stops the growth
+        assert mask[:, :gradient_width].all()  # whole gradient selected
+        assert not mask[:, gradient_width:].any()  # sharp edge stops the growth
 
     def test_sharp_edge_within_cap_is_not_crossed(self):
         # two flat regions; the second is within the cap but the edge is sharp
@@ -181,6 +182,34 @@ class TestGradientGrowing:
 
         assert mask[:, :20].all()
         assert not mask[:, 20:].any()
+
+    def test_ambiguous_threshold_does_not_leak_through_antialiased_edges(self):
+        # map-like image: flat regions with 2px anti-aliased ramps between
+        # them. At a loose threshold the selection must not chain from
+        # region to region through the ramps and flood the whole canvas.
+        levels = [80, 130, 180, 230]
+        values: list[int] = []
+        for i, level in enumerate(levels):
+            values += [level] * 18
+            if i < len(levels) - 1:
+                step = levels[i + 1] - level
+                values += [level + step // 3, level + 2 * step // 3]
+        image = gray_image(len(values), 10, values)
+
+        loose_threshold = 90  # most ambiguous slider position
+        tolerance = loose_threshold * DELTA_E_PER_THRESHOLD
+        # regions 3 and 4 are far beyond the tolerance of region 1
+        assert gray_delta_e(80, 180) > tolerance
+        assert gray_delta_e(80, 230) > tolerance
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=loose_threshold
+        )
+
+        assert mask[5, 5]
+        # region 2 may be selected (within tolerance), but 3 and 4 must not be
+        region3_start = 2 * 20
+        assert not mask[:, region3_start:].any()
 
     def test_growth_stops_at_cap(self):
         # a long smooth gradient: growth must stop around the cap
