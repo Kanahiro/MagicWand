@@ -228,6 +228,62 @@ class TestGradientGrowing:
         assert selected.max() == len(selected) - 1
 
 
+class TestSeedRefinement:
+    THRESHOLD = 50
+    TOLERANCE = THRESHOLD * DELTA_E_PER_THRESHOLD  # 15
+
+    def _banded_image(self) -> QImage:
+        # one visual region made of three shades, next to a distinct
+        # background: bands 100 / 118 / 140 (20 columns each), then 230
+        values = [100] * 20 + [118] * 20 + [140] * 20 + [230] * 20
+        return gray_image(len(values), 10, values)
+
+    def _preconditions(self):
+        # neighboring shades are within tolerance, the extreme shades are
+        # not: anchoring on the clicked pixel alone cannot select all
+        # three bands, re-anchoring on the region median can
+        assert gray_delta_e(100, 118) < self.TOLERANCE
+        assert gray_delta_e(118, 140) < self.TOLERANCE
+        assert gray_delta_e(100, 140) > self.TOLERANCE
+
+    def test_selection_converges_to_the_whole_region(self):
+        self._preconditions()
+        image = self._banded_image()
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert mask[:, :60].all()  # all three bands selected
+        assert not mask[:, 60:].any()  # background excluded
+
+    def test_selection_is_click_position_independent(self):
+        self._preconditions()
+        image = self._banded_image()
+        analyzer = ImageAnalyzer(image)
+
+        from_left_band = analyzer.to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+        from_right_band = analyzer.to_binary(
+            QPoint(55, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert (from_left_band == from_right_band).all()
+
+    def test_seed_patch_median_ignores_outlier_pixel(self):
+        # clicking a single outlier pixel inside a flat region behaves as
+        # if the surrounding region color was clicked
+        image = gray_image(30, 10, [120] * 30)
+        image.setPixelColor(15, 5, QColor(230, 230, 230))
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(15, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert mask.sum() >= 30 * 10 - 1  # whole region (outlier may be excluded)
+
+
 class TestFloodFillComponent:
     def setup_method(self):
         self.analyzer = ImageAnalyzer(None)

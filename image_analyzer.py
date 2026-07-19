@@ -8,6 +8,19 @@ DELTA_E_PER_THRESHOLD = 0.3
 # analysis resolution is chosen automatically: full canvas resolution,
 # downscaled only when the canvas exceeds this many pixels (e.g. 4K)
 MAX_ANALYSIS_PIXELS = 2_000_000
+# the initial reference color is the median of a (2r+1)x(2r+1) patch
+# around the clicked pixel
+SEED_PATCH_RADIUS = 1
+# after the first pass the reference color is re-anchored to the median
+# color of the selected region, at most this many times. Kept at 1: a
+# single re-anchor captures the "unrepresentative click" benefit, while
+# further iterations let the reference creep across adjacent regions
+REFINE_MAX_ITERATIONS = 1
+# ... stopping early once the region changes by less than this ratio
+REFINE_CONVERGED_RATIO = 0.02
+# the re-anchored reference may drift at most this fraction of the
+# tolerance away from the initially clicked color
+REFINE_MAX_DRIFT_RATIO = 0.5
 # region growing over smooth gradients may reach up to this multiple
 # of the tolerance away from the seed color
 GRADIENT_CAP_RATIO = 1.5
@@ -84,13 +97,21 @@ class ImageAnalyzer:
     ) -> np.ndarray:
         """Binarize the canvas into "the region the user clicked".
 
+        The reference color starts as the median of a small patch around
+        the click (so an unlucky click on an anti-aliased or noisy pixel
+        is not taken literally) and is then iteratively re-anchored to
+        the median color of the selected region: the selection converges
+        to the region's dominant color instead of depending on the exact
+        pixel that was clicked.
+
+        Each pass:
         1. compute the perceptual color difference (CIELAB delta-E) of
-           every pixel against the clicked color
+           every pixel against the reference color
         2. take the connected component around the click where
            delta-E < tolerance
         3. grow the region over smooth gradients: neighboring pixels
            join as long as the step between adjacent pixels is small,
-           up to GRADIENT_CAP_RATIO * tolerance from the seed color
+           up to GRADIENT_CAP_RATIO * tolerance from the reference color
 
         `resize_multiply` is chosen automatically when omitted: full
         resolution, downscaled only for very large canvases.
@@ -101,19 +122,69 @@ class ImageAnalyzer:
 
         tolerance = threshold * DELTA_E_PER_THRESHOLD
         lab = bgr_to_lab(self.to_ndarray(resize_multiply))
+        height, width = lab.shape[:2]
 
-        red, green, blue = self.get_rgb(point)
-        seed_lab = bgr_to_lab(np.array([[blue, green, red]], dtype=np.uint8))[0]
-        delta_e_seed = np.linalg.norm(lab - seed_lab, axis=2)
+        seed_x = int(point.x() * width / self.image.width())
+        seed_y = int(point.y() * height / self.image.height())
+        if not (0 <= seed_x < width and 0 <= seed_y < height):
+            return np.zeros((height, width), dtype=bool)
 
-        seed_x = int(point.x() * lab.shape[1] / self.image.width())
-        seed_y = int(point.y() * lab.shape[0] / self.image.height())
+        reference = self.seed_patch_median(lab, seed_x, seed_y)
+        region = self.binarize(lab, reference, tolerance, seed_x, seed_y)
 
-        core = delta_e_seed < tolerance
+        initial_reference = reference
+        for _ in range(REFINE_MAX_ITERATIONS):
+            if not region.any():
+                break
+            refined_reference = np.median(lab[region], axis=0)
+            drift = float(np.linalg.norm(refined_reference - initial_reference))
+            if drift > tolerance * REFINE_MAX_DRIFT_RATIO:
+                # the region median is too far from the clicked color;
+                # re-anchoring would select something else than clicked
+                break
+            refined = self.binarize(lab, refined_reference, tolerance, seed_x, seed_y)
+            if not self.covers_seed(refined, seed_x, seed_y):
+                # the reference drifted away from the click; keep the
+                # previous selection
+                break
+            changed = int(np.count_nonzero(refined != region))
+            previous_size = int(np.count_nonzero(region))
+            region = refined
+            if changed <= previous_size * REFINE_CONVERGED_RATIO:
+                break
+        return region
+
+    def binarize(
+        self,
+        lab: np.ndarray,
+        reference: np.ndarray,
+        tolerance: float,
+        seed_x: int,
+        seed_y: int,
+    ) -> np.ndarray:
+        """One selection pass against a fixed reference color."""
+        delta_e = np.linalg.norm(lab - reference, axis=2)
+        core = delta_e < tolerance
         region = self.flood_fill_component(core, seed_x, seed_y)
         if not region.any():
             return region
-        return self.grow_over_gradients(region, lab, delta_e_seed, tolerance)
+        return self.grow_over_gradients(region, lab, delta_e, tolerance)
+
+    def seed_patch_median(
+        self, lab: np.ndarray, seed_x: int, seed_y: int, radius: int = SEED_PATCH_RADIUS
+    ) -> np.ndarray:
+        """Median color of the small patch around the clicked pixel."""
+        height, width = lab.shape[:2]
+        x0, x1 = max(0, seed_x - radius), min(width, seed_x + radius + 1)
+        y0, y1 = max(0, seed_y - radius), min(height, seed_y + radius + 1)
+        return np.median(lab[y0:y1, x0:x1].reshape(-1, 3), axis=0)
+
+    def covers_seed(self, mask: np.ndarray, seed_x: int, seed_y: int) -> bool:
+        """Whether the mask contains the clicked pixel (or a pixel right
+        next to it — the click may sit on an anti-aliased border)."""
+        if mask[seed_y, seed_x]:
+            return True
+        return self.find_nearby_seed(mask, seed_x, seed_y) is not None
 
     def grow_over_gradients(
         self,
