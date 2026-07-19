@@ -203,6 +203,12 @@ class TestAddFeaturesToLayer:
         layer.undoStack().undo()
         assert layer.featureCount() == 0
 
+        # redo restores the creations step by step (Ctrl+Shift+Z in QGIS)
+        layer.undoStack().redo()
+        assert layer.featureCount() == 1
+        layer.undoStack().redo()
+        assert layer.featureCount() == 2
+
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
 class TestMakePolygons:
