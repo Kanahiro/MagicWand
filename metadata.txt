@@ -35,6 +35,7 @@ changelog=2.0.0
     - Tidy up the dock widget: the stateless Enable button is now "Start Magic Wand", the output layer combo has a label, and a newly created layer stays selected as the target of subsequent clicks
     - Replace Douglas-Peucker vertex thinning with area-based Visvalingam-Whyatt simplification: pixel staircases collapse cleanly while real corners are preserved (Douglas-Peucker used to clip corners near the ring start)
     - Polygons are added through the layer's edit session, one undo command per click: press Ctrl+Z to undo a creation (edits stay uncommitted until you save the layer)
+    - The confirmation dialog gains an Add Point button: temporarily hand control back to the map to click additional seed points into the same selection (masks are merged before polygonizing)
     - Add a processing algorithm "Polygonize by seed points" (magicwand:polygonizebyseeds): magic-wand selection on any RGB raster with a seed point layer, usable in models, batch runs and qgis_process; combine with "Convert map to raster" to reproduce the interactive behavior
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file

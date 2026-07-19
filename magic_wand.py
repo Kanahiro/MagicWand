@@ -2,7 +2,7 @@ import os.path
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
 from qgis.PyQt.QtGui import QColor, QIcon, QImage, QPainter
-from qgis.PyQt.QtWidgets import QAction, QDialog
+from qgis.PyQt.QtWidgets import QAction
 from qgis.core import (
     QgsApplication,
     QgsProject,
@@ -15,9 +15,9 @@ from qgis.gui import QgsRubberBand
 from .magic_wand_dockwidget import MagicwandDockWidget
 
 from .click_tool import ClickTool
-from .confirm_dialog import ConfirmDialog
 from .image_analyzer import ImageAnalyzer
 from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY, add_features_to_layer
+from .preview_session import PreviewSession
 from .processing_provider.provider import MagicWandProvider
 
 NEW_LAYER_ITEM_DATA = 0
@@ -69,6 +69,7 @@ class Magicwand:
 
         self.rubber_band = None
         self.processing_provider = None
+        self.preview_session = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -176,7 +177,7 @@ class Magicwand:
     def onClosePlugin(self):
         """Cleanup necessary items here when plugin dockwidget is closed"""
 
-        self.hide_tentative()
+        self.cancel_preview_session()
 
         # restore the map tool which was active before enabling Magic Wand
         if self.previous_map_tool is not None:
@@ -188,7 +189,7 @@ class Magicwand:
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
 
-        self.hide_tentative()
+        self.cancel_preview_session()
         if self.rubber_band is not None:
             self.canvas.scene().removeItem(self.rubber_band)
             self.rubber_band = None
@@ -220,45 +221,27 @@ class Magicwand:
 
     # actions on mapcanvas clicked
     def click_action(self, point):
-        """Show a tentative polygon for the clicked position and let the
-        user tune the threshold in a modal dialog before saving it.
-
-        With Skip Preview checked the polygon is saved immediately."""
-        image = self.make_image(self.canvas.mapSettings())
-        analyzer = ImageAnalyzer(image)
-        crs = QgsProject.instance().crs()
-
-        def build_features(slider_value):
-            threshold = 100 - slider_value
-            bin_index = analyzer.to_binary(point, threshold)
-            return PolygonMaker(self.canvas, bin_index).build_polygons(crs)
-
-        features = build_features(self.dockwidget.threshold_slider.value())
-
-        if not self.dockwidget.skip_preview_checkbox.isChecked():
-            self.show_tentative(features)
-            latest = {"features": features}
-
-            def recompute(slider_value):
-                latest["features"] = build_features(slider_value)
-                self.show_tentative(latest["features"])
-
-            dialog = ConfirmDialog(
-                self.dockwidget.threshold_slider.value(),
-                recompute,
-                parent=self.iface.mainWindow(),
-            )
-            accepted = dialog.exec() == QDialog.DialogCode.Accepted
-            self.hide_tentative()
-            if not accepted:
-                return
-            features = latest["features"]
-            # keep the confirmed threshold as the new default
-            self.dockwidget.threshold_slider.setValue(dialog.threshold())
-
-        if not features:
+        """Open a click-to-confirm session: a tentative polygon plus a
+        dialog to tune the threshold and add more seed points before
+        saving. With Skip Preview checked the polygon is saved
+        immediately instead."""
+        if self.preview_session is not None:
+            # an open session consumes canvas clicks (Add Point flow)
+            self.preview_session.handle_canvas_click(point)
             return
-        self.save_features(features, crs)
+
+        image = self.make_image(self.canvas.mapSettings())
+
+        if self.dockwidget.skip_preview_checkbox.isChecked():
+            crs = QgsProject.instance().crs()
+            threshold = 100 - self.dockwidget.threshold_slider.value()
+            bin_index = ImageAnalyzer(image).to_binary(point, threshold)
+            features = PolygonMaker(self.canvas, bin_index).build_polygons(crs)
+            if features:
+                self.save_features(features, crs)
+            return
+
+        self.preview_session = PreviewSession(self, image, point)
 
     def save_features(self, features, crs):
         layer_id = self.dockwidget.layerComboBox.currentData()
@@ -307,6 +290,11 @@ class Magicwand:
         p.end()
         return image
 
+    def cancel_preview_session(self):
+        if self.preview_session is not None:
+            self.preview_session.cancel()
+        self.hide_tentative()
+
     def start_magicwand(self):
         current_tool = self.canvas.mapTool()
         if current_tool is not None and current_tool is not self.map_tool:
@@ -314,7 +302,7 @@ class Magicwand:
         self.map_tool = ClickTool(
             self.iface,
             click_callback=self.click_action,
-            deactivated_callback=self.hide_tentative,
+            deactivated_callback=self.cancel_preview_session,
         )
         self.canvas.setMapTool(self.map_tool)
 
