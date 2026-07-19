@@ -4,9 +4,11 @@
 
 [general]
 name=Magic Wand
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.44
+qgisMaximumVersion=4.99
+supportsQt6=True
 description=Auto-making Polygon by MapCanvas
-version=1.3.2
+version=2.0.0
 author=Kanahiro Iguchi
 email=kanahiro.iguchi@gmail.com
 
@@ -18,12 +20,36 @@ repository=https://github.com/Kanahiro/MagicWand
 
 # Recommended items:
 
-hasProcessingProvider=no
-# Uncomment the following line and add your changelog:
-# changelog=
+hasProcessingProvider=yes
+changelog=2.0.0
+    - Support QGIS 4.x / Qt6 (scoped enums, sizeInBytes, PyQt6-safe code)
+    - Polygons are now traced by flood fill from the clicked point (connected component), replacing the whole-canvas scan and the Single Mode checkbox
+    - Colors are compared perceptually in CIELAB (delta-E) instead of RGB distance
+    - The selection grows over smooth color gradients (region growing) while sharp edges stop it
+    - Remove the Accuracy slider; analysis resolution is now chosen automatically (full resolution, downscaled only on very large canvases)
+    - Clicking now shows a tentative polygon with a confirmation dialog: adjust the Color Threshold while watching the result, then confirm to save (polygons are no longer created immediately on click)
+    - Fix runaway selection at loose Color Threshold: the gradient-growing edge tolerance is now a small fixed value instead of scaling with the slider, and the growth cap is tightened
+    - The reference color is refined from region statistics: it starts as the median of a small patch around the click and is re-anchored once to the selected region's median color, so the result no longer depends on the exact pixel that was clicked
+    - Rescale the Color Threshold: the slider now maps geometrically to delta-E 1-12 (the old strictest setting sits at the middle), compensating for the extra reach the refinement and gradient growing added
+    - Add a 1 click mode toggle to save polygons immediately on click, bypassing the confirmation dialog
+    - Tidy up the dock widget: the stateless Enable button is now "Start Magic Wand", the output layer combo has a label, and a newly created layer stays selected as the target of subsequent clicks
+    - Replace Douglas-Peucker vertex thinning with area-based Visvalingam-Whyatt simplification: pixel staircases collapse cleanly while real corners are preserved (Douglas-Peucker used to clip corners near the ring start)
+    - Polygons are added through the layer's edit session, one undo command per click: press Ctrl+Z to undo a creation (edits stay uncommitted until you save the layer)
+    - While the confirmation dialog is open, every further map click adds a seed point to the same selection; the dialog stays on top and the rest of the UI stays usable
+    - Multi-point selections combine all seed colors into one color model: a pixel matches when it is close to the nearest seed color and connected to any of the points (multi-source flood fill)
+    - Add a processing algorithm "Polygonize by seed points" (magicwand:polygonizebyseeds): magic-wand selection on any RGB raster with a seed point layer, usable in models, batch runs and qgis_process; combine with "Convert map to raster" to reproduce the interactive behavior. One seed feature = one selection = one multipolygon output; all points of a multipoint feature contribute to the same selection, like clicking multiple points in the interactive preview
+    - Load toolbar icon from file and drop compiled Qt resources
+    - Build the dock widget UI in Python instead of a Designer .ui file
+    - Use native: processing algorithms instead of deprecated qgis: ones
+    - Show only polygon layers as output targets in the layer selector
+    - Fix duplicated signal connections when reopening the dock widget
+    - Restore the previous map tool when the dock widget is closed
+    - Clean up dock widget and signal connections on plugin unload
+    - Require QGIS 3.44+ and modernize the code base (type hints etc.)
+    - Add unit tests and CI (lint / test on QGIS 3.44 and 4.0 / release)
 
 # Tags are comma separated with spaces allowed
-tags=python
+tags=python,polygon,digitizing,raster
 
 homepage=https://kiguchi999.hatenablog.com/
 category=Vector
@@ -39,9 +65,8 @@ deprecated=False
 # Check the documentation for more information.
 # plugin_dependencies=
 
-Category of the plugin: Raster, Vector, Database or Web
+# Category of the plugin: Raster, Vector, Database or Web
 # category=
 
 # If the plugin can run on QGIS Server.
 server=False
-

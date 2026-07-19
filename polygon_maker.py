@@ -1,83 +1,205 @@
-from qgis.core import QgsProject, QgsRectangle, QgsVectorLayer, QgsFeature, QgsGeometry, QgsCoordinateTransform
-import processing
 import numpy as np
 
+from qgis.core import (
+    Qgis,
+    QgsCoordinateReferenceSystem,
+    QgsFeature,
+    QgsGeometry,
+    QgsMapToPixel,
+    QgsProject,
+    QgsRectangle,
+    QgsVectorLayer,
+)
+from qgis import processing
+
+POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
+
+# vertex thinning tolerance, in mask-cell sizes. Simplification is
+# area-based (Visvalingam-Whyatt): a pixel staircase is a run of tiny
+# triangles of half a cell's area, so a threshold of one cell removes
+# them reliably while real corners (much larger triangles) survive —
+# unlike distance-based Douglas-Peucker, which clips corners depending
+# on where the ring happens to start
+SIMPLIFY_TOLERANCE_CELLS = 1.0
+
+
+class PixelGrid:
+    """Pixel<->map transform context for PolygonMaker.
+
+    Stands in for the map canvas: PolygonMaker only needs the pixel
+    width, the map units per pixel, and the pixel->map transform, so
+    any georeferenced pixel grid (e.g. a raster) works as an input.
+    Assumes square pixels.
+    """
+
+    def __init__(self, width: int, height: int, extent: QgsRectangle):
+        self._width = width
+        self._map_units_per_pixel = extent.width() / width
+        self._transform = QgsMapToPixel(
+            self._map_units_per_pixel,
+            extent.center().x(),
+            extent.center().y(),
+            width,
+            height,
+            0,
+        )
+
+    def width(self) -> int:
+        return self._width
+
+    def mapUnitsPerPixel(self) -> float:
+        return self._map_units_per_pixel
+
+    def getCoordinateTransform(self) -> QgsMapToPixel:
+        return self._transform
+
+
+def add_features_to_layer(
+    features: list[QgsFeature],
+    crs: QgsCoordinateReferenceSystem,
+    layer_id: str | None = None,
+) -> QgsVectorLayer:
+    """Append features to the layer with `layer_id`, or to a newly
+    created memory layer when no (existing) layer is given.
+
+    Features are added through the layer's edit buffer as a single edit
+    command, so each call can be undone with Ctrl+Z (the edits stay
+    uncommitted until the user saves the layer)."""
+    output = None
+    if layer_id:
+        output = QgsProject.instance().mapLayer(layer_id)
+    if output is None:
+        output = QgsVectorLayer(f"Polygon?crs={crs.authid()}", "magic_wand", "memory")
+        QgsProject.instance().addMapLayer(output)
+
+    if output.isEditable() or output.startEditing():
+        output.beginEditCommand("Magic Wand: add polygon")
+        output.addFeatures(features)
+        output.endEditCommand()
+    else:
+        # layer cannot enter an edit session (e.g. read-only source);
+        # fall back to a direct provider write without undo support
+        output.dataProvider().addFeatures(features)
+
+    output.updateExtents()
+    output.triggerRepaint()
+    return output
+
+
 class PolygonMaker:
-    def __init__(self, canvas, bin_index):
+    def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
         self.map_canvas = canvas
         self.size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
-        self.minimum_area = self.make_rect(0,0, self.size_multiply).area()
+        self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
         self.noise_multiply = 40
 
-    def make_polygons(self, point, crs, single_mode=False, layer_id=None):
+    def build_polygons(self, crs: QgsCoordinateReferenceSystem) -> list[QgsFeature]:
+        """Run the full pipeline and return the resulting features
+        without touching the project."""
         rects = self.make_rects()
+        if not rects:
+            return []
         rects_layer = self.make_layer_by(rects, crs)
 
-        dissolved_layer = processing.run('qgis:dissolve', {'INPUT':rects_layer,'OUTPUT':'memory:'})['OUTPUT']
-        single_part_layer = processing.run('qgis:multiparttosingleparts', {'INPUT':dissolved_layer,'OUTPUT':'memory:'})['OUTPUT']
+        dissolved_layer = processing.run(
+            "native:dissolve", {"INPUT": rects_layer, "OUTPUT": "memory:"}
+        )["OUTPUT"]
+        single_part_layer = processing.run(
+            "native:multiparttosingleparts",
+            {"INPUT": dissolved_layer, "OUTPUT": "memory:"},
+        )["OUTPUT"]
         single_features = single_part_layer.getFeatures()
-        
-        if single_mode:
-            for feature in single_features:
-                if feature.geometry().contains(self.map_canvas.getCoordinateTransform().toMapPoint(point.x(), point.y())):
-                    single_features = [feature]
-                    break
-        
+
         denoised_features = self.noise_reduction(single_features, self.noise_multiply)
+        if not denoised_features:
+            return []
         denoised_layer = self.make_layer_by(denoised_features, crs)
-        cleaned_layer = processing.run('qgis:deleteholes', {'INPUT':denoised_layer, 'MIN_AREA':self.minimum_area * self.size_multiply * self.noise_multiply, 'OUTPUT':'memory:'})['OUTPUT']
-        cleaned_features = cleaned_layer.getFeatures()
-        
-        #output layer
-        output = QgsVectorLayer('Polygon?crs=' + crs.authid() + '&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
-        if layer_id:
-            output = QgsProject.instance().mapLayer(layer_id)
 
-        output_provider = output.dataProvider()
-        output_provider.addFeatures(cleaned_features)
+        cell_size = self.minimum_area**0.5
+        simplified_layer = processing.run(
+            "native:simplifygeometries",
+            {
+                "INPUT": denoised_layer,
+                "METHOD": 2,  # area-based (Visvalingam-Whyatt)
+                "TOLERANCE": cell_size * SIMPLIFY_TOLERANCE_CELLS,
+                "OUTPUT": "memory:",
+            },
+        )["OUTPUT"]
+        cleaned_layer = processing.run(
+            "native:deleteholes",
+            {
+                "INPUT": simplified_layer,
+                # holes and specks share the same area threshold
+                "MIN_AREA": self.minimum_area * self.noise_multiply,
+                "OUTPUT": "memory:",
+            },
+        )["OUTPUT"]
+        return list(cleaned_layer.getFeatures())
 
-        QgsProject.instance().addMapLayer(output)
+    def make_polygons(
+        self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
+    ) -> None:
+        cleaned_features = self.build_polygons(crs)
+        if not cleaned_features:
+            return
+        add_features_to_layer(cleaned_features, crs, layer_id)
 
-    #make rectangle geometry by pointXY on Pixels
-    def make_rect(self, x, y, size_multiply, count=0):
-        pointTopLeft = self.map_canvas.getCoordinateTransform().toMapPoint(x * size_multiply, y * size_multiply)
-        pointBottomRight = self.map_canvas.getCoordinateTransform().toMapPoint((x + count + 1) * size_multiply, (y + 1) * size_multiply)
+    # make rectangle geometry by pointXY on Pixels
+    def make_rect(
+        self, x: int, y: int, size_multiply: float, count: int = 0
+    ) -> QgsGeometry:
+        point_top_left = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
+            x * size_multiply, y * size_multiply
+        )
+        point_bottom_right = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
+            (x + count + 1) * size_multiply, (y + 1) * size_multiply
+        )
 
-        geo = QgsGeometry.fromRect(QgsRectangle(pointTopLeft.x(), pointTopLeft.y(), pointBottomRight.x(), pointBottomRight.y()))
-        return geo
+        return QgsGeometry.fromRect(
+            QgsRectangle(
+                point_top_left.x(),
+                point_top_left.y(),
+                point_bottom_right.x(),
+                point_bottom_right.y(),
+            )
+        )
 
-    def make_rects(self):
-        #make 2d array including only TRUE pixel index
-        #true_points[0]:y axis indexes
-        #true_points[1]:x axis indexes
+    def make_rects(self) -> list[QgsFeature]:
+        # make 2d array including only TRUE pixel index
+        # true_points[0]:y axis indexes
+        # true_points[1]:x axis indexes
         true_points = np.where(self.bin_index)
 
-        #rectangle making sequence
+        # rectangle making sequence
         geos = []
-        #when neighbor pixel also true, incliment this count
-        connectedCount = 0
+        # when neighbor pixel also true, incliment this count
+        connected_count = 0
         for i in range(len(true_points[0])):
-            #skip loops same number to the count
-            if connectedCount > 0:
-                connectedCount = connectedCount - 1
+            # skip loops same number to the count
+            if connected_count > 0:
+                connected_count -= 1
                 continue
 
             x = true_points[1][i]
             y = true_points[0][i]
 
-            #when the final loop
+            # when the final loop
             if i >= len(true_points[0]) - 1:
                 geos.append(self.make_rect(x, y, self.size_multiply))
                 break
 
-            #calculate connectedCount
-            while true_points[1][i + connectedCount + 1] - true_points[1][i + connectedCount] == 1:
-                connectedCount = connectedCount + 1
-                if i + connectedCount + 1 >= len(true_points[0]) - 1:
+            # calculate connected_count
+            while (
+                true_points[1][i + connected_count + 1]
+                - true_points[1][i + connected_count]
+                == 1
+            ):
+                connected_count += 1
+                if i + connected_count + 1 >= len(true_points[0]) - 1:
                     break
 
-            geos.append(self.make_rect(x, y, self.size_multiply, connectedCount))
+            geos.append(self.make_rect(x, y, self.size_multiply, connected_count))
 
         rects = []
         for geo in geos:
@@ -86,21 +208,20 @@ class PolygonMaker:
             rects.append(rect)
         return rects
 
-    def make_layer_by(self, features, crs):
-        features_layer = QgsVectorLayer('Polygon?crs=' + crs.authid() + '&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
-        features_layer_provider = features_layer.dataProvider()
-        features_layer_provider.addFeatures(features)
+    def make_layer_by(
+        self, features: list[QgsFeature], crs: QgsCoordinateReferenceSystem
+    ) -> QgsVectorLayer:
+        features_layer = QgsVectorLayer(
+            f"Polygon?crs={crs.authid()}", "magic_wand", "memory"
+        )
+        features_layer.dataProvider().addFeatures(features)
+        features_layer.updateExtents()
         return features_layer
 
-    def noise_reduction(self, features, noise_multiply, torel_multiply=2.5):
-        output = []
-        torelance = self.map_canvas.mapUnitsPerPixel() * torel_multiply * self.size_multiply ** 0.6
-        for feature in features:
-            if feature.geometry().area() < self.minimum_area * noise_multiply:
-                continue
-            output_geo = feature.geometry().simplify(torelance)
-            output_feature = QgsFeature()
-            output_feature.setGeometry(output_geo)
-            output.append(output_feature)
-
-        return output
+    def noise_reduction(self, features, noise_multiply: float) -> list[QgsFeature]:
+        """Drop features smaller than `noise_multiply` mask cells."""
+        return [
+            feature
+            for feature in features
+            if feature.geometry().area() >= self.minimum_area * noise_multiply
+        ]

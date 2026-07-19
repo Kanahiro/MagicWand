@@ -33,4 +33,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     """
     #
     from .magic_wand import Magicwand
+
     return Magicwand(iface)

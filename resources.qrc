@@ -1,5 +1,0 @@
-<RCC>
-    <qresource prefix="/plugins/magic_wand" >
-        <file>icon.png</file>
-    </qresource>
-</RCC>

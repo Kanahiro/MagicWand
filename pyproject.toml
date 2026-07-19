@@ -1,0 +1,26 @@
+[project]
+name = "magicwand-qgis-plugin"
+version = "0.1.0"
+description = "QGIS plugin to make polygon easily and automatically by analysing MapCanvas"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Kanahiro Iguchi", email = "kanahiro.iguchi@gmail.com" }]
+dependencies = []
+
+[dependency-groups]
+dev = ["bandit>=1.8", "numpy>=1.24", "pytest>=7.0", "ruff>=0.14.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = ["N802", "E501", "RUF001", "F401"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", ".claude"]
+
+[tool.uv]
+exclude-newer = "1 week"
