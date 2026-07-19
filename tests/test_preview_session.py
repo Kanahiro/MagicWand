@@ -73,6 +73,26 @@ class TestBuildMultiSeedFeatures:
         assert len(features) == 1
         assert features[0].geometry().area() == pytest.approx(30 * 20)
 
+    def test_seed_colors_form_one_combined_model(self, modules):
+        # RED | BLUE | RED bands: seeding the left RED and the BLUE band
+        # also selects the right RED band (same color as a seed,
+        # connected through the other seed's band)
+        session_module, analyzer, grid = self._setup(
+            modules,
+            [(5, 5, 20, 20, RED), (25, 5, 20, 20, BLUE), (45, 5, 20, 20, RED)],
+        )
+
+        features = session_module.build_multi_seed_features(
+            analyzer,
+            grid,
+            [QgsPointXY(10, 25), QgsPointXY(35, 25)],
+            50,
+            CRS,
+        )
+
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(60 * 20)
+
     def test_single_seed_matches_the_plain_flow(self, modules):
         session_module, analyzer, grid = self._setup(modules, [(5, 5, 30, 20, RED)])
 

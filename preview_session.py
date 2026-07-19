@@ -1,5 +1,3 @@
-import numpy as np
-
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsFeature,
@@ -30,24 +28,25 @@ def build_multi_seed_features(
     slider_value: int,
     crs: QgsCoordinateReferenceSystem,
 ) -> list[QgsFeature]:
-    """Union of the magic-wand selections of all seed points, polygonized.
+    """The magic-wand selection of all seed points together, polygonized.
 
-    Masks are OR-combined before polygonization, so overlapping
-    selections dissolve into one polygon and disjoint ones become
-    separate features.
+    The seed colors form one combined color model and the flood fill
+    grows from all points at once (see ImageAnalyzer.mask_from_bgr_multi):
+    overlapping selections dissolve into one polygon and disjoint ones
+    become separate features.
     """
+    if not seeds:
+        return []
+
     threshold = 100 - slider_value
     to_pixel = grid.getCoordinateTransform()
-
-    mask: np.ndarray | None = None
+    points = []
     for map_point in seeds:
         device = to_pixel.transform(map_point)
-        seed_mask = analyzer.to_binary(
-            QPoint(int(device.x()), int(device.y())), threshold
-        )
-        mask = seed_mask if mask is None else mask | seed_mask
+        points.append(QPoint(int(device.x()), int(device.y())))
 
-    if mask is None or not mask.any():
+    mask = analyzer.to_binary_multi(points, threshold)
+    if not mask.any():
         return []
     return PolygonMaker(grid, mask).build_polygons(crs)
 

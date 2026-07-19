@@ -159,6 +159,36 @@ class TestPolygonizeBySeeds:
         assert len(features) == 1
         assert features[0].geometry().area() == pytest.approx(30 * 20)
 
+    def test_multipoint_colors_form_one_combined_model(self, tmp_path):
+        from qgis import processing
+
+        # RED | BLUE | RED bands side by side, seeded in the left RED
+        # band and the BLUE band by one multipoint feature. The right
+        # RED band matches a seed color and is connected through the
+        # BLUE band, so the combined color model selects it too —
+        # independent per-point selections could never reach it.
+        raster = write_rgb_geotiff(
+            tmp_path / "map.tif",
+            80,
+            40,
+            [(5, 5, 20, 20, RED), (25, 5, 20, 20, BLUE), (45, 5, 20, 20, RED)],
+        )
+        seeds = multipoint_seed_layer([[(10, 25), (35, 25)]])
+
+        result = processing.run(
+            "magicwand:polygonizebyseeds",
+            {
+                "INPUT": raster,
+                "SEEDS": seeds,
+                "TOLERANCE": 3.5,
+                "OUTPUT": "memory:",
+            },
+        )
+
+        features = list(result["OUTPUT"].getFeatures())
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(60 * 20)
+
     def test_seed_outside_raster_is_skipped(self, tmp_path):
         from qgis import processing
 
