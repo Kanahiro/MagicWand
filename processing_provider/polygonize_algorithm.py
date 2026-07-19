@@ -95,7 +95,7 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFeatureSource(
                 self.SEEDS,
                 "Seed points (one selection per feature)",
-                [QgsProcessing.TypeVectorPoint],
+                [QgsProcessing.SourceType.TypeVectorPoint],
             )
         )
         self.addParameter(
@@ -111,7 +111,7 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "Polygons",
-                QgsProcessing.TypeVectorPolygon,
+                QgsProcessing.SourceType.TypeVectorPolygon,
             )
         )
 
