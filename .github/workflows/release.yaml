@@ -6,6 +6,10 @@ on:
 
 env:
   PLUGIN_NAME: MagicWand
+  # plugins.qgis.org には歴史的経緯（旧来 GitHub の master ブランチ ZIP を
+  # そのままアップロードしていた）により "MagicWand-master" というパッケージ名で
+  # 登録されているため、ZIP 内のトップレベルディレクトリ名はこの名前でなければならない。
+  PACKAGE_DIR: MagicWand-master
 
 jobs:
   release:
@@ -15,7 +19,7 @@ jobs:
 
       - name: Create Plugin Directory
         run: |
-          mkdir ${{env.PLUGIN_NAME}}
+          mkdir ${{env.PACKAGE_DIR}}
           find . -type f | grep -ve './.git' \
             -ve '.github' \
             -ve '__pycache__/' \
@@ -25,17 +29,17 @@ jobs:
             -ve './.gitignore' \
             -ve './README.md' \
             -ve './img/' \
-            -ve './uv.lock' | xargs -I src cp --parents src ${{env.PLUGIN_NAME}}
+            -ve './uv.lock' | xargs -I src cp --parents src ${{env.PACKAGE_DIR}}
 
       - name: Write version to metadata.txt
         run: |
           VERSION=${{ github.event.release.tag_name }}
-          sed -i "s/^version=.*/version=$VERSION/" ${{env.PLUGIN_NAME}}/metadata.txt
-          cat ${{env.PLUGIN_NAME}}/metadata.txt
+          sed -i "s/^version=.*/version=$VERSION/" ${{env.PACKAGE_DIR}}/metadata.txt
+          cat ${{env.PACKAGE_DIR}}/metadata.txt
 
       - name: Create Archive
         run: |
-          zip -r ${{env.PLUGIN_NAME}}.zip ./${{env.PLUGIN_NAME}}
+          zip -r ${{env.PLUGIN_NAME}}.zip ./${{env.PACKAGE_DIR}}
 
       - name: Upload release asset
         env:

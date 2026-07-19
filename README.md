@@ -60,5 +60,11 @@ Publishing a GitHub Release triggers `.github/workflows/release.yaml`, which
 zips the plugin, uploads it as a release asset, and uploads it to
 plugins.qgis.org (the release tag is written to `metadata.txt` as the version).
 
+Note: the top-level directory inside the uploaded ZIP must be named
+`MagicWand-master`. The plugin is registered on plugins.qgis.org under the
+package name `MagicWand-master` for historical reasons — releases used to be
+the GitHub-generated `master` branch ZIP — and uploads with any other
+package directory name are rejected.
+
 # Contact
 kanahiro.iguchi@gmail.com
