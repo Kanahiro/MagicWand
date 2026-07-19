@@ -23,6 +23,7 @@ repository=https://github.com/Kanahiro/MagicWand
 hasProcessingProvider=no
 changelog=2.0.0
     - Support QGIS 4.x / Qt6 (scoped enums, sizeInBytes, PyQt6-safe code)
+    - Polygons are now traced by flood fill from the clicked point (connected component), replacing the whole-canvas scan and the Single Mode checkbox
     - Load toolbar icon from file and drop compiled Qt resources
     - Use native: processing algorithms instead of deprecated qgis: ones
     - Show only polygon layers as output targets in the layer selector

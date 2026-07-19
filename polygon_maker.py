@@ -21,7 +21,7 @@ class PolygonMaker:
         self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
         self.noise_multiply = 40
 
-    def make_polygons(self, point, crs, single_mode=False, layer_id=None):
+    def make_polygons(self, crs, layer_id=None):
         rects = self.make_rects()
         if not rects:
             return
@@ -30,14 +30,6 @@ class PolygonMaker:
         dissolved_layer = processing.run('native:dissolve', {'INPUT': rects_layer, 'OUTPUT': 'memory:'})['OUTPUT']
         single_part_layer = processing.run('native:multiparttosingleparts', {'INPUT': dissolved_layer, 'OUTPUT': 'memory:'})['OUTPUT']
         single_features = single_part_layer.getFeatures()
-
-        if single_mode:
-            clicked_point = self.map_canvas.getCoordinateTransform().toMapPoint(point.x(), point.y())
-            clicked_geo = QgsGeometry.fromPointXY(clicked_point)
-            for feature in single_features:
-                if feature.geometry().contains(clicked_geo):
-                    single_features = [feature]
-                    break
 
         denoised_features = self.noise_reduction(single_features, self.noise_multiply)
         if not denoised_features:

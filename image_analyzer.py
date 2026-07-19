@@ -46,7 +46,94 @@ class ImageAnalyzer:
         sum_ndarray = abs_ndarray.sum(axis=2)
         max_ndarray = abs_ndarray.max(axis=2)
         true_index = sum_ndarray + max_ndarray * 0.5 < threshold
-        return true_index
+
+        # keep only the connected component around the clicked pixel
+        seed_x = int(point.x() * true_index.shape[1] / self.image.width())
+        seed_y = int(point.y() * true_index.shape[0] / self.image.height())
+        return self.flood_fill_component(true_index, seed_x, seed_y)
+
+    def flood_fill_component(self, mask, seed_x, seed_y):
+        """Extract the 4-connected component of `mask` containing the seed pixel.
+
+        Works on horizontal runs of True pixels with union-find, so the cost
+        scales with the number of runs, not the number of pixels.
+        """
+        height, width = mask.shape
+        empty = np.zeros_like(mask)
+        if not (0 <= seed_y < height and 0 <= seed_x < width):
+            return empty
+        if not mask[seed_y, seed_x]:
+            # resizing may shift the clicked pixel off the mask; look nearby
+            seed = self.find_nearby_seed(mask, seed_x, seed_y)
+            if seed is None:
+                return empty
+            seed_x, seed_y = seed
+
+        parent = []
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(a, b):
+            root_a = find(a)
+            root_b = find(b)
+            if root_a != root_b:
+                parent[root_b] = root_a
+
+        rows = []
+        prev_starts = prev_ends = prev_ids = None
+        seed_run = -1
+        for y in range(height):
+            diff = np.diff(mask[y].astype(np.int8), prepend=0, append=0)
+            starts = np.flatnonzero(diff == 1)
+            ends = np.flatnonzero(diff == -1)  # exclusive
+            ids = list(range(len(parent), len(parent) + len(starts)))
+            parent.extend(ids)
+            rows.append((y, starts, ends, ids))
+
+            if y == seed_y:
+                idx = int(np.searchsorted(starts, seed_x, side='right')) - 1
+                if idx >= 0 and ends[idx] > seed_x:
+                    seed_run = ids[idx]
+
+            # merge runs overlapping a run in the previous row (4-connectivity)
+            if prev_starts is not None:
+                i = j = 0
+                while i < len(starts) and j < len(prev_starts):
+                    if starts[i] < prev_ends[j] and prev_starts[j] < ends[i]:
+                        union(ids[i], prev_ids[j])
+                    if ends[i] < prev_ends[j]:
+                        i += 1
+                    else:
+                        j += 1
+            prev_starts, prev_ends, prev_ids = starts, ends, ids
+
+        if seed_run < 0:
+            return empty
+
+        seed_root = find(seed_run)
+        component = empty
+        for y, starts, ends, ids in rows:
+            for k in range(len(ids)):
+                if find(ids[k]) == seed_root:
+                    component[y, starts[k]:ends[k]] = True
+        return component
+
+    def find_nearby_seed(self, mask, seed_x, seed_y, radius=3):
+        height, width = mask.shape
+        y0 = max(0, seed_y - radius)
+        y1 = min(height, seed_y + radius + 1)
+        x0 = max(0, seed_x - radius)
+        x1 = min(width, seed_x + radius + 1)
+        ys, xs = np.nonzero(mask[y0:y1, x0:x1])
+        if len(ys) == 0:
+            return None
+        distances = (ys + y0 - seed_y) ** 2 + (xs + x0 - seed_x) ** 2
+        nearest = int(np.argmin(distances))
+        return (int(xs[nearest]) + x0, int(ys[nearest]) + y0)
 
     def get_rgb(self, point):
         pixelColor = self.image.pixelColor(point.x(), point.y())
