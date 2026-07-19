@@ -8,7 +8,7 @@ qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Auto-making Polygon by MapCanvas
-version=2.0.0
+version=2.0.1
 author=Kanahiro Iguchi
 email=kanahiro.iguchi@gmail.com
 
