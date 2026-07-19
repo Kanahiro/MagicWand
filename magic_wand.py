@@ -207,7 +207,9 @@ class Magicwand:
     # actions on mapcanvas clicked
     def click_action(self, point):
         """Show a tentative polygon for the clicked position and let the
-        user tune the threshold in a modal dialog before saving it."""
+        user tune the threshold in a modal dialog before saving it.
+
+        With Skip Preview checked the polygon is saved immediately."""
         image = self.make_image(self.canvas.mapSettings())
         analyzer = ImageAnalyzer(image)
         crs = QgsProject.instance().crs()
@@ -217,28 +219,36 @@ class Magicwand:
             bin_index = analyzer.to_binary(point, threshold)
             return PolygonMaker(self.canvas, bin_index).build_polygons(crs)
 
-        latest = {"features": build_features(self.dockwidget.threshold_slider.value())}
-        self.show_tentative(latest["features"])
+        features = build_features(self.dockwidget.threshold_slider.value())
 
-        def recompute(slider_value):
-            latest["features"] = build_features(slider_value)
-            self.show_tentative(latest["features"])
+        if not self.dockwidget.skip_preview_checkbox.isChecked():
+            self.show_tentative(features)
+            latest = {"features": features}
 
-        dialog = ConfirmDialog(
-            self.dockwidget.threshold_slider.value(),
-            recompute,
-            parent=self.iface.mainWindow(),
-        )
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        self.hide_tentative()
-        if not accepted or not latest["features"]:
+            def recompute(slider_value):
+                latest["features"] = build_features(slider_value)
+                self.show_tentative(latest["features"])
+
+            dialog = ConfirmDialog(
+                self.dockwidget.threshold_slider.value(),
+                recompute,
+                parent=self.iface.mainWindow(),
+            )
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            self.hide_tentative()
+            if not accepted:
+                return
+            features = latest["features"]
+            # keep the confirmed threshold as the new default
+            self.dockwidget.threshold_slider.setValue(dialog.threshold())
+
+        if not features:
             return
+        self.save_features(features, crs)
 
-        # keep the confirmed threshold as the new default
-        self.dockwidget.threshold_slider.setValue(dialog.threshold())
-
+    def save_features(self, features, crs):
         layer_id = self.dockwidget.layerComboBox.currentData()
-        add_features_to_layer(latest["features"], crs, layer_id)
+        add_features_to_layer(features, crs, layer_id)
 
         selected_index = self.dockwidget.layerComboBox.currentIndex()
         self.reload_combo_box()

@@ -1,5 +1,6 @@
 from qgis.PyQt.QtCore import pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDockWidget,
     QGridLayout,
@@ -29,13 +30,19 @@ class MagicwandDockWidget(QDockWidget):
 
         self.enable_button = QPushButton("Enable")
         self.layerComboBox = QComboBox()
+        self.skip_preview_checkbox = QCheckBox("Skip Preview")
+        self.skip_preview_checkbox.setToolTip(
+            "Create polygons immediately on click, without the tentative "
+            "polygon and its confirmation dialog"
+        )
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
         configure_threshold_slider(self.threshold_slider)
         self.threshold_slider.setValue(DEFAULT_THRESHOLD)
 
         layout = QGridLayout()
         layout.addWidget(self.enable_button, 0, 0)
-        layout.addWidget(self.layerComboBox, 0, 1, 1, 3)
+        layout.addWidget(self.layerComboBox, 0, 1, 1, 2)
+        layout.addWidget(self.skip_preview_checkbox, 0, 3)
 
         layout.addWidget(QLabel("Color Threshold"), 1, 0)
         layout.addWidget(QLabel("Ambiguous"), 1, 1)
