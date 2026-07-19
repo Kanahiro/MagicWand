@@ -28,7 +28,8 @@ class MagicwandDockWidget(QDockWidget):
         self.setObjectName("MagicwandDockWidgetBase")
         self.setWindowTitle("Magic Wand")
 
-        self.enable_button = QPushButton("Enable")
+        self.start_button = QPushButton("Start Magic Wand")
+        self.start_button.setToolTip("Activate the Magic Wand map tool")
         self.layerComboBox = QComboBox()
         self.skip_preview_checkbox = QCheckBox("Skip Preview")
         self.skip_preview_checkbox.setToolTip(
@@ -40,14 +41,18 @@ class MagicwandDockWidget(QDockWidget):
         self.threshold_slider.setValue(DEFAULT_THRESHOLD)
 
         layout = QGridLayout()
-        layout.addWidget(self.enable_button, 0, 0)
-        layout.addWidget(self.layerComboBox, 0, 1, 1, 2)
-        layout.addWidget(self.skip_preview_checkbox, 0, 3)
+        layout.addWidget(self.start_button, 0, 0)
+        layout.addWidget(QLabel("Output Layer"), 0, 1)
+        layout.addWidget(self.layerComboBox, 0, 2)
+        layout.addWidget(self.skip_preview_checkbox, 0, 3, 1, 2)
 
         layout.addWidget(QLabel("Color Threshold"), 1, 0)
         layout.addWidget(QLabel("Ambiguous"), 1, 1)
         layout.addWidget(self.threshold_slider, 1, 2)
         layout.addWidget(QLabel("Strict"), 1, 3)
+
+        # let the combo box / slider column take the extra space
+        layout.setColumnStretch(2, 1)
 
         contents = QWidget()
         contents.setLayout(layout)

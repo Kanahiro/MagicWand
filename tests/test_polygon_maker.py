@@ -138,6 +138,34 @@ class TestBuildPolygons:
 
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
+class TestAddFeaturesToLayer:
+    def test_returns_the_created_layer(self, canvas, polygon_maker_module):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        features = maker.build_polygons(crs=CRS)
+
+        layer = polygon_maker_module.add_features_to_layer(features, CRS)
+
+        # the caller can select the created layer (e.g. in the combo box)
+        assert layer.id() in QgsProject.instance().mapLayers()
+        assert layer.featureCount() == 1
+
+    def test_returns_the_existing_target_layer(self, canvas, polygon_maker_module):
+        existing = QgsVectorLayer(f"Polygon?crs={CRS.authid()}", "existing", "memory")
+        QgsProject.instance().addMapLayer(existing)
+
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        features = maker.build_polygons(crs=CRS)
+
+        layer = polygon_maker_module.add_features_to_layer(features, CRS, existing.id())
+
+        assert layer is existing
+
+
+@pytest.mark.usefixtures("native_processing", "qgis_new_project")
 class TestMakePolygons:
     def test_creates_new_layer_with_polygon(self, canvas, polygon_maker_module):
         bin_index = np.zeros((10, 20), dtype=bool)

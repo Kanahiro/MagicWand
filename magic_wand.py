@@ -248,11 +248,14 @@ class Magicwand:
 
     def save_features(self, features, crs):
         layer_id = self.dockwidget.layerComboBox.currentData()
-        add_features_to_layer(features, crs, layer_id)
+        output_layer = add_features_to_layer(features, crs, layer_id)
 
-        selected_index = self.dockwidget.layerComboBox.currentIndex()
+        # keep the output layer selected — in particular, a freshly
+        # created layer becomes the target of subsequent clicks
         self.reload_combo_box()
-        self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
+        index = self.dockwidget.layerComboBox.findData(output_layer.id())
+        if index >= 0:
+            self.dockwidget.layerComboBox.setCurrentIndex(index)
         self.canvas.refreshAllLayers()
 
     # ------------------------------------------------------- tentative polygon
@@ -288,7 +291,7 @@ class Magicwand:
         p.end()
         return image
 
-    def enable_magicwand(self):
+    def start_magicwand(self):
         current_tool = self.canvas.mapTool()
         if current_tool is not None and current_tool is not self.map_tool:
             self.previous_map_tool = current_tool
@@ -324,7 +327,7 @@ class Magicwand:
             if self.dockwidget is None:
                 # Create the dockwidget (after translation) and keep reference
                 self.dockwidget = MagicwandDockWidget()
-                self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
+                self.dockwidget.start_button.clicked.connect(self.start_magicwand)
                 # connect to provide cleanup on closing of dockwidget
                 self.dockwidget.closingPlugin.connect(self.onClosePlugin)
                 QgsProject.instance().layersAdded.connect(self.reload_combo_box)
@@ -336,6 +339,6 @@ class Magicwand:
             )
             self.dockwidget.show()
 
-            self.enable_magicwand()
+            self.start_magicwand()
 
             self.reload_combo_box()
