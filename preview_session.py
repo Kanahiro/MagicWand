@@ -99,6 +99,10 @@ class PreviewSession:
         self.awaiting_point = False
         self.dialog.set_waiting_for_point(False)
         self.add_seed(widget_point)
+        # hand control back to the dialog: re-focus it so the UI is
+        # locked again and keyboard input (Enter/Esc) lands there
+        self.dialog.raise_()
+        self.dialog.activateWindow()
 
     def wait_for_point(self) -> None:
         self.awaiting_point = True
