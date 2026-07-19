@@ -3,6 +3,35 @@ import numpy as np
 from qgis.PyQt.QtCore import QPoint
 from qgis.PyQt.QtGui import QImage
 
+# slider threshold (10-90) -> CIELAB delta-E tolerance (3-27)
+DELTA_E_PER_THRESHOLD = 0.3
+# region growing over smooth gradients may reach up to this multiple
+# of the tolerance away from the seed color
+GRADIENT_CAP_RATIO = 2.0
+# adjacent pixels are considered "smooth" if their delta-E is below
+# tolerance * this ratio; anti-aliased edges jump far above it
+EDGE_TOLERANCE_RATIO = 0.35
+MIN_EDGE_TOLERANCE = 2.0
+
+
+def bgr_to_lab(bgr: np.ndarray) -> np.ndarray:
+    """Convert a uint8 BGR array (...x3) to CIELAB (sRGB, D65 white point)."""
+    rgb = bgr[..., ::-1].astype(np.float64) / 255.0
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    matrix = np.array(
+        [
+            [0.4124564, 0.3575761, 0.1804375],
+            [0.2126729, 0.7151522, 0.0721750],
+            [0.0193339, 0.1191920, 0.9503041],
+        ]
+    )
+    xyz = linear @ matrix.T / np.array([0.95047, 1.0, 1.08883])
+    f = np.where(xyz > (6 / 29) ** 3, np.cbrt(xyz), xyz / (3 * (6 / 29) ** 2) + 4 / 29)
+    lightness = 116 * f[..., 1] - 16
+    a = 500 * (f[..., 0] - f[..., 1])
+    b = 200 * (f[..., 1] - f[..., 2])
+    return np.stack([lightness, a, b], axis=-1)
+
 
 class ImageAnalyzer:
     def __init__(self, image: QImage):
@@ -44,17 +73,82 @@ class ImageAnalyzer:
     def to_binary(
         self, point: QPoint, resize_multiply: float = 0.2, threshold: float = 50
     ) -> np.ndarray:
-        red, green, blue = self.get_rgb(point)
-        img_ndarray = self.to_ndarray(resize_multiply).astype(np.int16)
-        abs_ndarray = abs(img_ndarray - [blue, green, red])
-        sum_ndarray = abs_ndarray.sum(axis=2)
-        max_ndarray = abs_ndarray.max(axis=2)
-        true_index = sum_ndarray + max_ndarray * 0.5 < threshold
+        """Binarize the canvas into "the region the user clicked".
 
-        # keep only the connected component around the clicked pixel
-        seed_x = int(point.x() * true_index.shape[1] / self.image.width())
-        seed_y = int(point.y() * true_index.shape[0] / self.image.height())
-        return self.flood_fill_component(true_index, seed_x, seed_y)
+        1. compute the perceptual color difference (CIELAB delta-E) of
+           every pixel against the clicked color
+        2. take the connected component around the click where
+           delta-E < tolerance
+        3. grow the region over smooth gradients: neighboring pixels
+           join as long as the step between adjacent pixels is small,
+           up to GRADIENT_CAP_RATIO * tolerance from the seed color
+        """
+        tolerance = threshold * DELTA_E_PER_THRESHOLD
+        lab = bgr_to_lab(self.to_ndarray(resize_multiply))
+
+        red, green, blue = self.get_rgb(point)
+        seed_lab = bgr_to_lab(np.array([[blue, green, red]], dtype=np.uint8))[0]
+        delta_e_seed = np.linalg.norm(lab - seed_lab, axis=2)
+
+        seed_x = int(point.x() * lab.shape[1] / self.image.width())
+        seed_y = int(point.y() * lab.shape[0] / self.image.height())
+
+        core = delta_e_seed < tolerance
+        region = self.flood_fill_component(core, seed_x, seed_y)
+        if not region.any():
+            return region
+        return self.grow_over_gradients(region, lab, delta_e_seed, tolerance)
+
+    def grow_over_gradients(
+        self,
+        region: np.ndarray,
+        lab: np.ndarray,
+        delta_e_seed: np.ndarray,
+        tolerance: float,
+    ) -> np.ndarray:
+        """Grow `region` over smooth color gradients.
+
+        A neighboring pixel joins the region when the color step from the
+        adjacent region pixel is smooth (delta-E < edge tolerance), as long
+        as it stays within GRADIENT_CAP_RATIO * tolerance of the seed color.
+        Anti-aliased boundaries between distinct colors produce large
+        per-pixel steps, so they stop the growth naturally.
+        """
+        edge_tolerance = max(MIN_EDGE_TOLERANCE, tolerance * EDGE_TOLERANCE_RATIO)
+        cap = delta_e_seed < tolerance * GRADIENT_CAP_RATIO
+
+        # growth can never leave the connected cap area around the region,
+        # so restrict the iteration to its bounding box
+        region_ys, region_xs = np.nonzero(region)
+        envelope = self.flood_fill_component(cap, int(region_xs[0]), int(region_ys[0]))
+        env_ys, env_xs = np.nonzero(envelope)
+        y0, y1 = env_ys.min(), env_ys.max() + 1
+        x0, x1 = env_xs.min(), env_xs.max() + 1
+
+        grown = region[y0:y1, x0:x1].copy()
+        env = envelope[y0:y1, x0:x1]
+        window = lab[y0:y1, x0:x1]
+        smooth_h = (
+            np.linalg.norm(window[:, 1:] - window[:, :-1], axis=2) < edge_tolerance
+        )
+        smooth_v = (
+            np.linalg.norm(window[1:, :] - window[:-1, :], axis=2) < edge_tolerance
+        )
+
+        while True:
+            frontier = np.zeros_like(grown)
+            frontier[:, 1:] |= grown[:, :-1] & smooth_h
+            frontier[:, :-1] |= grown[:, 1:] & smooth_h
+            frontier[1:, :] |= grown[:-1, :] & smooth_v
+            frontier[:-1, :] |= grown[1:, :] & smooth_v
+            frontier &= env & ~grown
+            if not frontier.any():
+                break
+            grown |= frontier
+
+        result = np.zeros_like(region)
+        result[y0:y1, x0:x1] = grown
+        return result
 
     def flood_fill_component(
         self, mask: np.ndarray, seed_x: int, seed_y: int

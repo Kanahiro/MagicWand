@@ -24,6 +24,8 @@ hasProcessingProvider=no
 changelog=2.0.0
     - Support QGIS 4.x / Qt6 (scoped enums, sizeInBytes, PyQt6-safe code)
     - Polygons are now traced by flood fill from the clicked point (connected component), replacing the whole-canvas scan and the Single Mode checkbox
+    - Colors are compared perceptually in CIELAB (delta-E) instead of RGB distance
+    - The selection grows over smooth color gradients (region growing) while sharp edges stop it
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file
     - Use native: processing algorithms instead of deprecated qgis: ones

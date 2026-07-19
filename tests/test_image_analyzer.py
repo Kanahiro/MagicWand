@@ -4,7 +4,12 @@ from collections import deque
 
 import numpy as np
 import pytest
-from plugin_dir.image_analyzer import ImageAnalyzer
+from plugin_dir.image_analyzer import (
+    DELTA_E_PER_THRESHOLD,
+    GRADIENT_CAP_RATIO,
+    ImageAnalyzer,
+    bgr_to_lab,
+)
 from qgis.PyQt.QtCore import QPoint
 from qgis.PyQt.QtGui import QColor, QImage
 
@@ -85,6 +90,87 @@ class TestToBinary:
         # scaled rectangle is 20x12 at (10, 6)
         assert mask[12, 20]
         assert abs(int(mask.sum()) - 20 * 12) <= 40  # allow edge wobble
+
+
+class TestBgrToLab:
+    def test_reference_colors(self):
+        lab = bgr_to_lab(
+            np.array(
+                [
+                    [255, 255, 255],  # white
+                    [0, 0, 0],  # black
+                    [0, 0, 255],  # red (BGR order)
+                ],
+                dtype=np.uint8,
+            )
+        )
+        assert lab[0] == pytest.approx([100.0, 0.0, 0.0], abs=0.5)
+        assert lab[1] == pytest.approx([0.0, 0.0, 0.0], abs=0.5)
+        assert lab[2] == pytest.approx([53.2, 80.1, 67.2], abs=1.0)
+
+
+def gray_image(width: int, height: int, column_values: list[int]) -> QImage:
+    """Image whose columns are gray levels given per column."""
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    for x, value in enumerate(column_values):
+        color = QColor(value, value, value)
+        for y in range(height):
+            image.setPixelColor(x, y, color)
+    return image
+
+
+def gray_delta_e(value_a: int, value_b: int) -> float:
+    lab = bgr_to_lab(np.array([[value_a] * 3, [value_b] * 3], dtype=np.uint8))
+    return float(np.linalg.norm(lab[0] - lab[1]))
+
+
+class TestGradientGrowing:
+    THRESHOLD = 50
+    TOLERANCE = THRESHOLD * DELTA_E_PER_THRESHOLD  # 15
+    CAP = TOLERANCE * GRADIENT_CAP_RATIO  # 30
+
+    def test_smooth_gradient_is_followed_beyond_tolerance(self):
+        # columns 0..59: smooth gray gradient 100 -> 159 (~0.4 dE per step);
+        # columns 60..79: flat 220 behind a sharp jump
+        values = [100 + x for x in range(60)] + [220] * 20
+        # total gradient span exceeds the plain tolerance but stays under the cap
+        assert self.TOLERANCE < gray_delta_e(100, 159) < self.CAP
+        image = gray_image(80, 10, values)
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert mask[:, :60].all()  # whole gradient selected
+        assert not mask[:, 60:].any()  # sharp edge stops the growth
+
+    def test_sharp_edge_within_cap_is_not_crossed(self):
+        # two flat regions; the second is within the cap but the edge is sharp
+        assert self.TOLERANCE < gray_delta_e(100, 140) < self.CAP
+        image = gray_image(40, 10, [100] * 20 + [140] * 20)
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert mask[:, :20].all()
+        assert not mask[:, 20:].any()
+
+    def test_growth_stops_at_cap(self):
+        # a long smooth gradient: growth must stop around the cap
+        values = list(range(60, 240))
+        assert gray_delta_e(60, 239) > self.CAP
+        image = gray_image(len(values), 10, values)
+
+        mask = ImageAnalyzer(image).to_binary(
+            QPoint(0, 5), resize_multiply=1.0, threshold=self.THRESHOLD
+        )
+
+        assert mask[5, 0]
+        assert not mask[:, -1].any()
+        # selected columns form one contiguous band from the left
+        selected = np.nonzero(mask[5])[0]
+        assert selected.max() == len(selected) - 1
 
 
 class TestFloodFillComponent:
