@@ -1,13 +1,14 @@
 import numpy as np
 
+from qgis.PyQt.QtCore import QPoint
 from qgis.PyQt.QtGui import QImage
 
 
 class ImageAnalyzer:
-    def __init__(self, image):
+    def __init__(self, image: QImage):
         self.image = image
 
-    def to_ndarray(self, resize_multiply):
+    def to_ndarray(self, resize_multiply: float) -> np.ndarray:
         scaled_img = self.resize(self.image, resize_multiply).convertToFormat(
             QImage.Format.Format_ARGB32)
 
@@ -15,11 +16,7 @@ class ImageAnalyzer:
         height = scaled_img.height()
 
         ptr = scaled_img.constBits()
-        # QImage.byteCount() was removed in Qt6; sizeInBytes() exists since Qt 5.10
-        if hasattr(scaled_img, 'sizeInBytes'):
-            ptr.setsize(scaled_img.sizeInBytes())
-        else:
-            ptr.setsize(scaled_img.byteCount())
+        ptr.setsize(scaled_img.sizeInBytes())
 
         # reshape via bytesPerLine to be robust against scanline padding
         arr = np.frombuffer(ptr, dtype=np.uint8).reshape(
@@ -35,11 +32,12 @@ class ImageAnalyzer:
         #                 [x1yn, x2yn ... xnyn]]
         #xnyn = [blue, green, red]
 
-    def resize(self, image, resize_multiply):
-        scaled_img = image.scaled(int(image.width() * resize_multiply), int(image.height() * resize_multiply))
-        return scaled_img
+    def resize(self, image: QImage, resize_multiply: float) -> QImage:
+        return image.scaled(int(image.width() * resize_multiply),
+                            int(image.height() * resize_multiply))
 
-    def to_binary(self, point, resize_multiply=0.2, threshold=50):
+    def to_binary(self, point: QPoint, resize_multiply: float = 0.2,
+                  threshold: float = 50) -> np.ndarray:
         red, green, blue = self.get_rgb(point)
         img_ndarray = self.to_ndarray(resize_multiply).astype(np.int16)
         abs_ndarray = abs(img_ndarray - [blue, green, red])
@@ -52,7 +50,7 @@ class ImageAnalyzer:
         seed_y = int(point.y() * true_index.shape[0] / self.image.height())
         return self.flood_fill_component(true_index, seed_x, seed_y)
 
-    def flood_fill_component(self, mask, seed_x, seed_y):
+    def flood_fill_component(self, mask: np.ndarray, seed_x: int, seed_y: int) -> np.ndarray:
         """Extract the 4-connected component of `mask` containing the seed pixel.
 
         Works on horizontal runs of True pixels with union-find, so the cost
@@ -69,15 +67,15 @@ class ImageAnalyzer:
                 return empty
             seed_x, seed_y = seed
 
-        parent = []
+        parent: list[int] = []
 
-        def find(i):
+        def find(i: int) -> int:
             while parent[i] != i:
                 parent[i] = parent[parent[i]]
                 i = parent[i]
             return i
 
-        def union(a, b):
+        def union(a: int, b: int) -> None:
             root_a = find(a)
             root_b = find(b)
             if root_a != root_b:
@@ -122,7 +120,8 @@ class ImageAnalyzer:
                     component[y, starts[k]:ends[k]] = True
         return component
 
-    def find_nearby_seed(self, mask, seed_x, seed_y, radius=3):
+    def find_nearby_seed(self, mask: np.ndarray, seed_x: int, seed_y: int,
+                         radius: int = 3) -> tuple[int, int] | None:
         height, width = mask.shape
         y0 = max(0, seed_y - radius)
         y1 = min(height, seed_y + radius + 1)
@@ -135,9 +134,6 @@ class ImageAnalyzer:
         nearest = int(np.argmin(distances))
         return (int(xs[nearest]) + x0, int(ys[nearest]) + y0)
 
-    def get_rgb(self, point):
-        pixelColor = self.image.pixelColor(point.x(), point.y())
-        red_value = pixelColor.red()
-        green_value = pixelColor.green()
-        blue_value = pixelColor.blue()
-        return (red_value, green_value, blue_value)
+    def get_rgb(self, point: QPoint) -> tuple[int, int, int]:
+        pixel_color = self.image.pixelColor(point.x(), point.y())
+        return (pixel_color.red(), pixel_color.green(), pixel_color.blue())

@@ -1,27 +1,29 @@
 import numpy as np
 
-from qgis.core import QgsProject, QgsRectangle, QgsVectorLayer, QgsFeature, QgsGeometry
+from qgis.core import (
+    Qgis,
+    QgsCoordinateReferenceSystem,
+    QgsFeature,
+    QgsGeometry,
+    QgsProject,
+    QgsRectangle,
+    QgsVectorLayer,
+)
 from qgis import processing
 
-# Qgis.GeometryType was introduced in QGIS 3.30 and is the only spelling
-# available in QGIS 4.x; fall back to QgsWkbTypes for older 3.x releases
-try:
-    from qgis.core import Qgis
-    POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
-except (ImportError, AttributeError):
-    from qgis.core import QgsWkbTypes
-    POLYGON_GEOMETRY = QgsWkbTypes.PolygonGeometry
+POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 
 
 class PolygonMaker:
-    def __init__(self, canvas, bin_index):
+    def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
         self.map_canvas = canvas
         self.size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
         self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
         self.noise_multiply = 40
 
-    def make_polygons(self, crs, layer_id=None):
+    def make_polygons(self, crs: QgsCoordinateReferenceSystem,
+                      layer_id: str | None = None) -> None:
         rects = self.make_rects()
         if not rects:
             return
@@ -43,7 +45,7 @@ class PolygonMaker:
         if layer_id:
             output = QgsProject.instance().mapLayer(layer_id)
         if output is None:
-            output = QgsVectorLayer('Polygon?crs=' + crs.authid(), 'magic_wand', 'memory')
+            output = QgsVectorLayer(f'Polygon?crs={crs.authid()}', 'magic_wand', 'memory')
             QgsProject.instance().addMapLayer(output)
 
         output.dataProvider().addFeatures(cleaned_features)
@@ -51,14 +53,15 @@ class PolygonMaker:
         output.triggerRepaint()
 
     #make rectangle geometry by pointXY on Pixels
-    def make_rect(self, x, y, size_multiply, count=0):
-        pointTopLeft = self.map_canvas.getCoordinateTransform().toMapPoint(x * size_multiply, y * size_multiply)
-        pointBottomRight = self.map_canvas.getCoordinateTransform().toMapPoint((x + count + 1) * size_multiply, (y + 1) * size_multiply)
+    def make_rect(self, x: int, y: int, size_multiply: float, count: int = 0) -> QgsGeometry:
+        point_top_left = self.map_canvas.getCoordinateTransform().toMapPoint(x * size_multiply, y * size_multiply)
+        point_bottom_right = self.map_canvas.getCoordinateTransform().toMapPoint((x + count + 1) * size_multiply, (y + 1) * size_multiply)
 
-        geo = QgsGeometry.fromRect(QgsRectangle(pointTopLeft.x(), pointTopLeft.y(), pointBottomRight.x(), pointBottomRight.y()))
-        return geo
+        return QgsGeometry.fromRect(QgsRectangle(
+            point_top_left.x(), point_top_left.y(),
+            point_bottom_right.x(), point_bottom_right.y()))
 
-    def make_rects(self):
+    def make_rects(self) -> list[QgsFeature]:
         #make 2d array including only TRUE pixel index
         #true_points[0]:y axis indexes
         #true_points[1]:x axis indexes
@@ -67,11 +70,11 @@ class PolygonMaker:
         #rectangle making sequence
         geos = []
         #when neighbor pixel also true, incliment this count
-        connectedCount = 0
+        connected_count = 0
         for i in range(len(true_points[0])):
             #skip loops same number to the count
-            if connectedCount > 0:
-                connectedCount = connectedCount - 1
+            if connected_count > 0:
+                connected_count -= 1
                 continue
 
             x = true_points[1][i]
@@ -82,13 +85,13 @@ class PolygonMaker:
                 geos.append(self.make_rect(x, y, self.size_multiply))
                 break
 
-            #calculate connectedCount
-            while true_points[1][i + connectedCount + 1] - true_points[1][i + connectedCount] == 1:
-                connectedCount = connectedCount + 1
-                if i + connectedCount + 1 >= len(true_points[0]) - 1:
+            #calculate connected_count
+            while true_points[1][i + connected_count + 1] - true_points[1][i + connected_count] == 1:
+                connected_count += 1
+                if i + connected_count + 1 >= len(true_points[0]) - 1:
                     break
 
-            geos.append(self.make_rect(x, y, self.size_multiply, connectedCount))
+            geos.append(self.make_rect(x, y, self.size_multiply, connected_count))
 
         rects = []
         for geo in geos:
@@ -97,14 +100,15 @@ class PolygonMaker:
             rects.append(rect)
         return rects
 
-    def make_layer_by(self, features, crs):
-        features_layer = QgsVectorLayer('Polygon?crs=' + crs.authid(), 'magic_wand', 'memory')
-        features_layer_provider = features_layer.dataProvider()
-        features_layer_provider.addFeatures(features)
+    def make_layer_by(self, features: list[QgsFeature],
+                      crs: QgsCoordinateReferenceSystem) -> QgsVectorLayer:
+        features_layer = QgsVectorLayer(f'Polygon?crs={crs.authid()}', 'magic_wand', 'memory')
+        features_layer.dataProvider().addFeatures(features)
         features_layer.updateExtents()
         return features_layer
 
-    def noise_reduction(self, features, noise_multiply, torel_multiply=2.5):
+    def noise_reduction(self, features, noise_multiply: float,
+                        torel_multiply: float = 2.5) -> list[QgsFeature]:
         output = []
         torelance = self.map_canvas.mapUnitsPerPixel() * torel_multiply * self.size_multiply ** 0.6
         for feature in features:

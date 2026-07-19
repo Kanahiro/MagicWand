@@ -4,7 +4,7 @@
 
 [general]
 name=Magic Wand
-qgisMinimumVersion=3.22
+qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Auto-making Polygon by MapCanvas
@@ -31,6 +31,7 @@ changelog=2.0.0
     - Fix duplicated signal connections when reopening the dock widget
     - Restore the previous map tool when the dock widget is closed
     - Clean up dock widget and signal connections on plugin unload
+    - Require QGIS 3.44+ and modernize the code base (type hints etc.)
 
 # Tags are comma separated with spaces allowed
 tags=python,polygon,digitizing,raster

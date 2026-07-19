@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import os.path
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
@@ -41,7 +39,7 @@ class Magicwand:
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
-            'Magicwand_{}.qm'.format(locale[0:2]))
+            f'Magicwand_{locale[0:2]}.qm')
 
         if os.path.exists(locale_path):
             self.translator = QTranslator()
@@ -50,9 +48,9 @@ class Magicwand:
 
         # Declare instance attributes
         self.actions = []
-        self.menu = self.tr(u'&Magic Wand')
-        self.toolbar = self.iface.addToolBar(u'Magicwand')
-        self.toolbar.setObjectName(u'Magicwand')
+        self.menu = self.tr('&Magic Wand')
+        self.toolbar = self.iface.addToolBar('Magicwand')
+        self.toolbar.setObjectName('Magicwand')
 
         self.pluginIsActive = False
         self.dockwidget = None
@@ -187,7 +185,7 @@ class Magicwand:
 
         for action in self.actions:
             self.iface.removePluginVectorMenu(
-                self.tr(u'&Magic Wand'),
+                self.tr('&Magic Wand'),
                 action)
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
