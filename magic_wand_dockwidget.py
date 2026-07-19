@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QWidget,
 )
@@ -61,8 +62,12 @@ class MagicwandDockWidget(QDockWidget):
         layout.addSpacing(12)
         layout.addWidget(self.skip_preview_checkbox)
 
+        layout.setContentsMargins(6, 2, 6, 2)
+
         contents = QWidget()
         contents.setLayout(layout)
+        # never taller than the single row of controls
+        contents.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.setWidget(contents)
 
     def closeEvent(self, event):
