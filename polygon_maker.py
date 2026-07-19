@@ -1,43 +1,62 @@
-from qgis.core import QgsProject, QgsRectangle, QgsVectorLayer, QgsFeature, QgsGeometry, QgsCoordinateTransform
-import processing
 import numpy as np
+
+from qgis.core import QgsProject, QgsRectangle, QgsVectorLayer, QgsFeature, QgsGeometry
+from qgis import processing
+
+# Qgis.GeometryType was introduced in QGIS 3.30 and is the only spelling
+# available in QGIS 4.x; fall back to QgsWkbTypes for older 3.x releases
+try:
+    from qgis.core import Qgis
+    POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
+except (ImportError, AttributeError):
+    from qgis.core import QgsWkbTypes
+    POLYGON_GEOMETRY = QgsWkbTypes.PolygonGeometry
+
 
 class PolygonMaker:
     def __init__(self, canvas, bin_index):
         self.bin_index = bin_index
         self.map_canvas = canvas
         self.size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
-        self.minimum_area = self.make_rect(0,0, self.size_multiply).area()
+        self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
         self.noise_multiply = 40
 
     def make_polygons(self, point, crs, single_mode=False, layer_id=None):
         rects = self.make_rects()
+        if not rects:
+            return
         rects_layer = self.make_layer_by(rects, crs)
 
-        dissolved_layer = processing.run('qgis:dissolve', {'INPUT':rects_layer,'OUTPUT':'memory:'})['OUTPUT']
-        single_part_layer = processing.run('qgis:multiparttosingleparts', {'INPUT':dissolved_layer,'OUTPUT':'memory:'})['OUTPUT']
+        dissolved_layer = processing.run('native:dissolve', {'INPUT': rects_layer, 'OUTPUT': 'memory:'})['OUTPUT']
+        single_part_layer = processing.run('native:multiparttosingleparts', {'INPUT': dissolved_layer, 'OUTPUT': 'memory:'})['OUTPUT']
         single_features = single_part_layer.getFeatures()
-        
+
         if single_mode:
+            clicked_point = self.map_canvas.getCoordinateTransform().toMapPoint(point.x(), point.y())
+            clicked_geo = QgsGeometry.fromPointXY(clicked_point)
             for feature in single_features:
-                if feature.geometry().contains(self.map_canvas.getCoordinateTransform().toMapPoint(point.x(), point.y())):
+                if feature.geometry().contains(clicked_geo):
                     single_features = [feature]
                     break
-        
+
         denoised_features = self.noise_reduction(single_features, self.noise_multiply)
+        if not denoised_features:
+            return
         denoised_layer = self.make_layer_by(denoised_features, crs)
-        cleaned_layer = processing.run('qgis:deleteholes', {'INPUT':denoised_layer, 'MIN_AREA':self.minimum_area * self.size_multiply * self.noise_multiply, 'OUTPUT':'memory:'})['OUTPUT']
-        cleaned_features = cleaned_layer.getFeatures()
-        
+        cleaned_layer = processing.run('native:deleteholes', {'INPUT': denoised_layer, 'MIN_AREA': self.minimum_area * self.size_multiply * self.noise_multiply, 'OUTPUT': 'memory:'})['OUTPUT']
+        cleaned_features = list(cleaned_layer.getFeatures())
+
         #output layer
-        output = QgsVectorLayer('Polygon?crs=' + crs.authid() + '&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
+        output = None
         if layer_id:
             output = QgsProject.instance().mapLayer(layer_id)
+        if output is None:
+            output = QgsVectorLayer('Polygon?crs=' + crs.authid(), 'magic_wand', 'memory')
+            QgsProject.instance().addMapLayer(output)
 
-        output_provider = output.dataProvider()
-        output_provider.addFeatures(cleaned_features)
-
-        QgsProject.instance().addMapLayer(output)
+        output.dataProvider().addFeatures(cleaned_features)
+        output.updateExtents()
+        output.triggerRepaint()
 
     #make rectangle geometry by pointXY on Pixels
     def make_rect(self, x, y, size_multiply, count=0):
@@ -87,9 +106,10 @@ class PolygonMaker:
         return rects
 
     def make_layer_by(self, features, crs):
-        features_layer = QgsVectorLayer('Polygon?crs=' + crs.authid() + '&field=MYNYM:integer&field=MYTXT:string', 'magic_wand', 'memory')
+        features_layer = QgsVectorLayer('Polygon?crs=' + crs.authid(), 'magic_wand', 'memory')
         features_layer_provider = features_layer.dataProvider()
         features_layer_provider.addFeatures(features)
+        features_layer.updateExtents()
         return features_layer
 
     def noise_reduction(self, features, noise_multiply, torel_multiply=2.5):

@@ -1,6 +1,8 @@
 # MagicWand
 QGIS plugin to make polygon easily and automatically by analyzing MapCanvas.
 
+Supports QGIS 3.22 or later, including QGIS 4.x (Qt6).
+
 # Sample
 ![QGIS/MagicWand](./img/sample.gif)
 

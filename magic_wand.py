@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt, QSize
+import os.path
+
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
 from qgis.PyQt.QtGui import QIcon, QImage, QPainter
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import QgsProject, QgsMapLayer, QgsRectangle, QgsPoint, QgsMultiBandColorRenderer, QgsRaster, QgsMapSettings, QgsMapRendererCustomPainterJob
-# Initialize Qt resources from file resources.py
-from .resources import *
+from qgis.PyQt.QtWidgets import QAction
+from qgis.core import QgsProject, QgsVectorLayer, QgsMapRendererCustomPainterJob
 
 # Import the code for the DockWidget
 from .magic_wand_dockwidget import MagicwandDockWidget
-import os.path
 
 from .Utils import ClickTool
 from .image_analyzer import ImageAnalyzer
-from .polygon_maker import PolygonMaker
+from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY
+
+NEW_LAYER_ITEM_DATA = 0
 
 
 class Magicwand:
@@ -36,11 +37,11 @@ class Magicwand:
         self.plugin_dir = os.path.dirname(__file__)
 
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        locale = QSettings().value('locale/userLocale') or 'en'
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
-            'Magicwand_{}.qm'.format(locale))
+            'Magicwand_{}.qm'.format(locale[0:2]))
 
         if os.path.exists(locale_path):
             self.translator = QTranslator()
@@ -50,17 +51,13 @@ class Magicwand:
         # Declare instance attributes
         self.actions = []
         self.menu = self.tr(u'&Magic Wand')
-        # TODO: We are going to let the user set this up in a future iteration
         self.toolbar = self.iface.addToolBar(u'Magicwand')
         self.toolbar.setObjectName(u'Magicwand')
 
-        #print "** INITIALIZING Magicwand"
-
         self.pluginIsActive = False
         self.dockwidget = None
-
-        self.output_layer = None
-
+        self.map_tool = None
+        self.previous_map_tool = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -76,7 +73,6 @@ class Magicwand:
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('Magicwand', message)
-
 
     def add_action(
         self,
@@ -129,7 +125,6 @@ class Magicwand:
         """
 
         icon = QIcon(icon_path)
-        text = "Magic Wand"
         action = QAction(icon, text, parent)
         action.triggered.connect(callback)
         action.setEnabled(enabled_flag)
@@ -152,14 +147,13 @@ class Magicwand:
 
         return action
 
-
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
 
-        icon_path = ':/plugins/magic_wand/icon.png'
+        icon_path = os.path.join(self.plugin_dir, 'icon.png')
         self.add_action(
             icon_path,
-            text=self.tr(u''),
+            text='Magic Wand',
             callback=self.run,
             parent=self.iface.mainWindow())
 
@@ -168,24 +162,28 @@ class Magicwand:
     def onClosePlugin(self):
         """Cleanup necessary items here when plugin dockwidget is closed"""
 
-        #print "** CLOSING Magicwand"
-
-        # disconnects
-        self.dockwidget.closingPlugin.disconnect(self.onClosePlugin)
-
-        # remove this statement if dockwidget is to remain
-        # for reuse if plugin is reopened
-        # Commented next statement since it causes QGIS crashe
-        # when closing the docked window:
-        # self.dockwidget = None
+        # restore the map tool which was active before enabling Magic Wand
+        if self.previous_map_tool is not None:
+            self.canvas.setMapTool(self.previous_map_tool)
+            self.previous_map_tool = None
 
         self.pluginIsActive = False
-
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
 
-        #print "** UNLOAD Magicwand"
+        try:
+            QgsProject.instance().layersAdded.disconnect(self.reload_combo_box)
+            QgsProject.instance().layersRemoved.disconnect(self.reload_combo_box)
+        except TypeError:
+            # signals were never connected
+            pass
+
+        if self.dockwidget is not None:
+            self.dockwidget.closingPlugin.disconnect(self.onClosePlugin)
+            self.iface.removeDockWidget(self.dockwidget)
+            self.dockwidget.deleteLater()
+            self.dockwidget = None
 
         for action in self.actions:
             self.iface.removePluginVectorMenu(
@@ -199,7 +197,7 @@ class Magicwand:
 
     #actions on mapcanvas clicked
     def click_action(self, point):
-        mapSettings = self.iface.mapCanvas().mapSettings()
+        mapSettings = self.canvas.mapSettings()
         image = self.make_image(mapSettings)
         image_analyzer = ImageAnalyzer(image)
         #get slider value
@@ -207,7 +205,7 @@ class Magicwand:
         threshold = 100 - self.dockwidget.threshold_slider.value()
         bin_index = image_analyzer.to_binary(point, resize_multiply, threshold)
 
-        polygon_maker = PolygonMaker(self.iface.mapCanvas(), bin_index)
+        polygon_maker = PolygonMaker(self.canvas, bin_index)
         project_crs = QgsProject.instance().crs()
         single_mode = self.dockwidget.single_mode.isChecked()
         selected_layer_id = self.dockwidget.layerComboBox.currentData()
@@ -218,12 +216,10 @@ class Magicwand:
         self.reload_combo_box()
         self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
         self.canvas.refreshAllLayers()
-        
-        return
 
     #make and return QImage from MapCanvas
     def make_image(self, mapSettings):
-        image = QImage(mapSettings.outputSize(), QImage.Format_RGB32)
+        image = QImage(mapSettings.outputSize(), QImage.Format.Format_RGB32)
         p = QPainter()
         p.begin(image)
         mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
@@ -233,16 +229,18 @@ class Magicwand:
         return image
 
     def enable_magicwand(self):
-        ct = ClickTool(self.iface,  self.click_action)
-        self.previous_map_tool = self.iface.mapCanvas().mapTool()
-        self.iface.mapCanvas().setMapTool(ct)
+        current_tool = self.canvas.mapTool()
+        if current_tool is not None and current_tool is not self.map_tool:
+            self.previous_map_tool = current_tool
+        self.map_tool = ClickTool(self.iface, self.click_action)
+        self.canvas.setMapTool(self.map_tool)
 
     def init_sliders(self):
         self.dockwidget.accuracy_slider.setMinimum(20)
         self.dockwidget.accuracy_slider.setMaximum(100)
         self.dockwidget.accuracy_slider.setSingleStep(20)
         self.dockwidget.accuracy_slider.setValue(60)
-        
+
         self.dockwidget.threshold_slider.setMinimum(10)
         self.dockwidget.threshold_slider.setMaximum(90)
         self.dockwidget.threshold_slider.setSingleStep(10)
@@ -250,12 +248,13 @@ class Magicwand:
 
     def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
-        self.dockwidget.layerComboBox.addItem('===New Layer===',0)
+        self.dockwidget.layerComboBox.addItem('===New Layer===', NEW_LAYER_ITEM_DATA)
         layers = QgsProject.instance().mapLayers()
         for key, layer in layers.items():
-            if layer.type() == QgsMapLayer.VectorLayer:
+            # only polygon layers can receive the generated polygons
+            if isinstance(layer, QgsVectorLayer) and layer.geometryType() == POLYGON_GEOMETRY:
                 #key is ID of each layers
-                self.dockwidget.layerComboBox.addItem(layer.name(),key)
+                self.dockwidget.layerComboBox.addItem(layer.name(), key)
 
     def run(self):
         """Run method that loads and starts the plugin"""
@@ -263,29 +262,23 @@ class Magicwand:
         if not self.pluginIsActive:
             self.pluginIsActive = True
 
-            #print "** STARTING Magicwand"
-
             # dockwidget may not exist if:
             #    first run of plugin
             #    removed on close (see self.onClosePlugin method)
-            if self.dockwidget == None:
+            if self.dockwidget is None:
                 # Create the dockwidget (after translation) and keep reference
                 self.dockwidget = MagicwandDockWidget()
-
-            # connect to provide cleanup on closing of dockwidget
-            self.dockwidget.closingPlugin.connect(self.onClosePlugin)
+                self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
+                # connect to provide cleanup on closing of dockwidget
+                self.dockwidget.closingPlugin.connect(self.onClosePlugin)
+                QgsProject.instance().layersAdded.connect(self.reload_combo_box)
+                QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
 
             # show the dockwidget
-            self.iface.addDockWidget(Qt.TopDockWidgetArea, self.dockwidget)
+            self.iface.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, self.dockwidget)
             self.dockwidget.show()
 
-            ct = ClickTool(self.iface,  self.click_action)
-            self.previous_map_tool = self.iface.mapCanvas().mapTool()
-            self.iface.mapCanvas().setMapTool(ct)
+            self.enable_magicwand()
 
-            self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
-
-            QgsProject.instance().layersAdded.connect(self.reload_combo_box)
-            QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
             self.reload_combo_box()
             self.init_sliders()
