@@ -8,7 +8,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsMapRendererCustomPainterJob
 # Import the code for the DockWidget
 from .magic_wand_dockwidget import MagicwandDockWidget
 
-from .Utils import ClickTool
+from .click_tool import ClickTool
 from .image_analyzer import ImageAnalyzer
 from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY
 
@@ -35,11 +35,10 @@ class Magicwand:
         self.plugin_dir = os.path.dirname(__file__)
 
         # initialize locale
-        locale = QSettings().value('locale/userLocale') or 'en'
+        locale = QSettings().value("locale/userLocale") or "en"
         locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            f'Magicwand_{locale[0:2]}.qm')
+            self.plugin_dir, "i18n", f"Magicwand_{locale[0:2]}.qm"
+        )
 
         if os.path.exists(locale_path):
             self.translator = QTranslator()
@@ -48,9 +47,9 @@ class Magicwand:
 
         # Declare instance attributes
         self.actions = []
-        self.menu = self.tr('&Magic Wand')
-        self.toolbar = self.iface.addToolBar('Magicwand')
-        self.toolbar.setObjectName('Magicwand')
+        self.menu = self.tr("&Magic Wand")
+        self.toolbar = self.iface.addToolBar("Magicwand")
+        self.toolbar.setObjectName("Magicwand")
 
         self.pluginIsActive = False
         self.dockwidget = None
@@ -70,7 +69,7 @@ class Magicwand:
         :rtype: QString
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
-        return QCoreApplication.translate('Magicwand', message)
+        return QCoreApplication.translate("Magicwand", message)
 
     def add_action(
         self,
@@ -82,7 +81,8 @@ class Magicwand:
         add_to_toolbar=True,
         status_tip=None,
         whats_this=None,
-        parent=None):
+        parent=None,
+    ):
         """Add a toolbar icon to the toolbar.
 
         :param icon_path: Path to the icon for this action. Can be a resource
@@ -137,9 +137,7 @@ class Magicwand:
             self.toolbar.addAction(action)
 
         if add_to_menu:
-            self.iface.addPluginToVectorMenu(
-                self.menu,
-                action)
+            self.iface.addPluginToVectorMenu(self.menu, action)
 
         self.actions.append(action)
 
@@ -148,14 +146,15 @@ class Magicwand:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
 
-        icon_path = os.path.join(self.plugin_dir, 'icon.png')
+        icon_path = os.path.join(self.plugin_dir, "icon.png")
         self.add_action(
             icon_path,
-            text='Magic Wand',
+            text="Magic Wand",
             callback=self.run,
-            parent=self.iface.mainWindow())
+            parent=self.iface.mainWindow(),
+        )
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
     def onClosePlugin(self):
         """Cleanup necessary items here when plugin dockwidget is closed"""
@@ -184,21 +183,19 @@ class Magicwand:
             self.dockwidget = None
 
         for action in self.actions:
-            self.iface.removePluginVectorMenu(
-                self.tr('&Magic Wand'),
-                action)
+            self.iface.removePluginVectorMenu(self.tr("&Magic Wand"), action)
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
         del self.toolbar
 
-    #--------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
 
-    #actions on mapcanvas clicked
+    # actions on mapcanvas clicked
     def click_action(self, point):
         mapSettings = self.canvas.mapSettings()
         image = self.make_image(mapSettings)
         image_analyzer = ImageAnalyzer(image)
-        #get slider value
+        # get slider value
         resize_multiply = self.dockwidget.accuracy_slider.value() / 100
         threshold = 100 - self.dockwidget.threshold_slider.value()
         bin_index = image_analyzer.to_binary(point, resize_multiply, threshold)
@@ -214,7 +211,7 @@ class Magicwand:
         self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
         self.canvas.refreshAllLayers()
 
-    #make and return QImage from MapCanvas
+    # make and return QImage from MapCanvas
     def make_image(self, mapSettings):
         image = QImage(mapSettings.outputSize(), QImage.Format.Format_RGB32)
         p = QPainter()
@@ -245,12 +242,15 @@ class Magicwand:
 
     def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
-        self.dockwidget.layerComboBox.addItem('===New Layer===', NEW_LAYER_ITEM_DATA)
+        self.dockwidget.layerComboBox.addItem("===New Layer===", NEW_LAYER_ITEM_DATA)
         layers = QgsProject.instance().mapLayers()
         for key, layer in layers.items():
             # only polygon layers can receive the generated polygons
-            if isinstance(layer, QgsVectorLayer) and layer.geometryType() == POLYGON_GEOMETRY:
-                #key is ID of each layers
+            if (
+                isinstance(layer, QgsVectorLayer)
+                and layer.geometryType() == POLYGON_GEOMETRY
+            ):
+                # key is ID of each layers
                 self.dockwidget.layerComboBox.addItem(layer.name(), key)
 
     def run(self):
@@ -272,7 +272,9 @@ class Magicwand:
                 QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
 
             # show the dockwidget
-            self.iface.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, self.dockwidget)
+            self.iface.addDockWidget(
+                Qt.DockWidgetArea.TopDockWidgetArea, self.dockwidget
+            )
             self.dockwidget.show()
 
             self.enable_magicwand()

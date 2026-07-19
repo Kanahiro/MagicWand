@@ -10,7 +10,8 @@ class ImageAnalyzer:
 
     def to_ndarray(self, resize_multiply: float) -> np.ndarray:
         scaled_img = self.resize(self.image, resize_multiply).convertToFormat(
-            QImage.Format.Format_ARGB32)
+            QImage.Format.Format_ARGB32
+        )
 
         width = scaled_img.width()
         height = scaled_img.height()
@@ -18,26 +19,31 @@ class ImageAnalyzer:
         ptr = scaled_img.constBits()
         ptr.setsize(scaled_img.sizeInBytes())
 
-        # reshape via bytesPerLine to be robust against scanline padding
+        # reshape via bytesPerLine to be robust against scanline padding;
+        # copy() detaches the result from the QImage buffer, which is
+        # freed when scaled_img goes out of scope
         arr = np.frombuffer(ptr, dtype=np.uint8).reshape(
-            height, scaled_img.bytesPerLine() // 4, 4)
-        return arr[:, :width, :3]
-        #returned structure
-        #img = x1y1 x2y1 ... xny1
+            height, scaled_img.bytesPerLine() // 4, 4
+        )
+        return arr[:, :width, :3].copy()
+        # returned structure
+        # img = x1y1 x2y1 ... xny1
         #      x1y2 x2y2 ... xny2
         #            ...
         #      x1yn x2yn ... xnyn
-        #then ndarray is [[x1y1, x2y1 ... xny1],
+        # then ndarray is [[x1y1, x2y1 ... xny1],
         #                 [x1y2, x2y2 ... xny2],
         #                 [x1yn, x2yn ... xnyn]]
-        #xnyn = [blue, green, red]
+        # xnyn = [blue, green, red]
 
     def resize(self, image: QImage, resize_multiply: float) -> QImage:
-        return image.scaled(int(image.width() * resize_multiply),
-                            int(image.height() * resize_multiply))
+        return image.scaled(
+            int(image.width() * resize_multiply), int(image.height() * resize_multiply)
+        )
 
-    def to_binary(self, point: QPoint, resize_multiply: float = 0.2,
-                  threshold: float = 50) -> np.ndarray:
+    def to_binary(
+        self, point: QPoint, resize_multiply: float = 0.2, threshold: float = 50
+    ) -> np.ndarray:
         red, green, blue = self.get_rgb(point)
         img_ndarray = self.to_ndarray(resize_multiply).astype(np.int16)
         abs_ndarray = abs(img_ndarray - [blue, green, red])
@@ -50,7 +56,9 @@ class ImageAnalyzer:
         seed_y = int(point.y() * true_index.shape[0] / self.image.height())
         return self.flood_fill_component(true_index, seed_x, seed_y)
 
-    def flood_fill_component(self, mask: np.ndarray, seed_x: int, seed_y: int) -> np.ndarray:
+    def flood_fill_component(
+        self, mask: np.ndarray, seed_x: int, seed_y: int
+    ) -> np.ndarray:
         """Extract the 4-connected component of `mask` containing the seed pixel.
 
         Works on horizontal runs of True pixels with union-find, so the cost
@@ -93,7 +101,7 @@ class ImageAnalyzer:
             rows.append((y, starts, ends, ids))
 
             if y == seed_y:
-                idx = int(np.searchsorted(starts, seed_x, side='right')) - 1
+                idx = int(np.searchsorted(starts, seed_x, side="right")) - 1
                 if idx >= 0 and ends[idx] > seed_x:
                     seed_run = ids[idx]
 
@@ -117,11 +125,12 @@ class ImageAnalyzer:
         for y, starts, ends, ids in rows:
             for k in range(len(ids)):
                 if find(ids[k]) == seed_root:
-                    component[y, starts[k]:ends[k]] = True
+                    component[y, starts[k] : ends[k]] = True
         return component
 
-    def find_nearby_seed(self, mask: np.ndarray, seed_x: int, seed_y: int,
-                         radius: int = 3) -> tuple[int, int] | None:
+    def find_nearby_seed(
+        self, mask: np.ndarray, seed_x: int, seed_y: int, radius: int = 3
+    ) -> tuple[int, int] | None:
         height, width = mask.shape
         y0 = max(0, seed_y - radius)
         y1 = min(height, seed_y + radius + 1)

@@ -32,6 +32,7 @@ changelog=2.0.0
     - Restore the previous map tool when the dock widget is closed
     - Clean up dock widget and signal connections on plugin unload
     - Require QGIS 3.44+ and modernize the code base (type hints etc.)
+    - Add unit tests and CI (lint / test on QGIS 3.44 and 4.0 / release)
 
 # Tags are comma separated with spaces allowed
 tags=python,polygon,digitizing,raster
