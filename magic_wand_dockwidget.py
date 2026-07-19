@@ -1,4 +1,7 @@
+import os.path
+
 from qgis.PyQt.QtCore import pyqtSignal, Qt
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -28,8 +31,10 @@ class MagicwandDockWidget(QDockWidget):
         self.setObjectName("MagicwandDockWidgetBase")
         self.setWindowTitle("Magic Wand")
 
-        self.start_button = QPushButton("Start Magic Wand")
-        self.start_button.setToolTip("Activate the Magic Wand map tool")
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        self.start_button = QPushButton()
+        self.start_button.setIcon(QIcon(icon_path))
+        self.start_button.setToolTip("Start Magic Wand")
         self.layerComboBox = QComboBox()
         self.skip_preview_checkbox = QCheckBox("Skip Preview")
         self.skip_preview_checkbox.setToolTip(
@@ -47,7 +52,7 @@ class MagicwandDockWidget(QDockWidget):
         # everything on a single compact row
         layout = QHBoxLayout()
         layout.addWidget(self.start_button)
-        layout.addWidget(QLabel("Output Layer"))
+        layout.addWidget(QLabel("Output"))
         layout.addWidget(self.layerComboBox, 1)
         layout.addSpacing(12)
         layout.addWidget(QLabel("Ambiguous"))

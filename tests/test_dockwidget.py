@@ -12,5 +12,7 @@ class TestMagicwandDockWidget:
         assert dock.threshold_slider.maximum() == 90
         # the confirm flow is the default; Skip Preview is opt-in
         assert not dock.skip_preview_checkbox.isChecked()
-        # the start button carries no on/off state, it just activates the tool
-        assert dock.start_button.text() == "Start Magic Wand"
+        # the start button is icon-only; the tooltip names the action
+        assert dock.start_button.text() == ""
+        assert not dock.start_button.icon().isNull()
+        assert dock.start_button.toolTip() == "Start Magic Wand"
