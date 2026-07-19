@@ -3,7 +3,12 @@ import os.path
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
 from qgis.PyQt.QtGui import QColor, QIcon, QImage, QPainter
 from qgis.PyQt.QtWidgets import QAction, QDialog
-from qgis.core import QgsProject, QgsVectorLayer, QgsMapRendererCustomPainterJob
+from qgis.core import (
+    QgsApplication,
+    QgsProject,
+    QgsVectorLayer,
+    QgsMapRendererCustomPainterJob,
+)
 from qgis.gui import QgsRubberBand
 
 # Import the code for the DockWidget
@@ -13,6 +18,7 @@ from .click_tool import ClickTool
 from .confirm_dialog import ConfirmDialog
 from .image_analyzer import ImageAnalyzer
 from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY, add_features_to_layer
+from .processing_provider.provider import MagicWandProvider
 
 NEW_LAYER_ITEM_DATA = 0
 
@@ -62,6 +68,7 @@ class Magicwand:
         self.previous_map_tool = None
 
         self.rubber_band = None
+        self.processing_provider = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -161,6 +168,9 @@ class Magicwand:
             parent=self.iface.mainWindow(),
         )
 
+        self.processing_provider = MagicWandProvider()
+        QgsApplication.processingRegistry().addProvider(self.processing_provider)
+
     # --------------------------------------------------------------------------
 
     def onClosePlugin(self):
@@ -195,6 +205,10 @@ class Magicwand:
             self.iface.removeDockWidget(self.dockwidget)
             self.dockwidget.deleteLater()
             self.dockwidget = None
+
+        if self.processing_provider is not None:
+            QgsApplication.processingRegistry().removeProvider(self.processing_provider)
+            self.processing_provider = None
 
         for action in self.actions:
             self.iface.removePluginVectorMenu(self.tr("&Magic Wand"), action)

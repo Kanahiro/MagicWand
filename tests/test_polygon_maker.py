@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from qgis.core import (
     QgsCoordinateReferenceSystem,
-    QgsMapToPixel,
     QgsProject,
     QgsRectangle,
     QgsVectorLayer,
@@ -13,39 +12,13 @@ from qgis.core import (
 CRS = QgsCoordinateReferenceSystem("EPSG:3857")
 
 
-class FakeCanvas:
-    """Deterministic stand-in for the parts of QgsMapCanvas PolygonMaker uses.
-
-    A real QgsMapCanvas widget defers resize handling to its event loop,
-    which makes pixel<->map transforms unpredictable in headless tests.
-    """
-
-    def __init__(self, width: int, height: int, extent: QgsRectangle):
-        self._width = width
-        self._mupp = extent.width() / width
-        self._transform = QgsMapToPixel(
-            self._mupp,
-            extent.center().x(),
-            extent.center().y(),
-            width,
-            height,
-            0,
-        )
-
-    def width(self) -> int:
-        return self._width
-
-    def mapUnitsPerPixel(self) -> float:
-        return self._mupp
-
-    def getCoordinateTransform(self) -> QgsMapToPixel:
-        return self._transform
-
-
 @pytest.fixture
-def canvas(qgis_app):
-    # 200x100 px canvas showing a 200x100 map-unit extent -> 1 unit/px
-    return FakeCanvas(200, 100, QgsRectangle(0, 0, 200, 100))
+def canvas(qgis_app, polygon_maker_module):
+    # PixelGrid stands in for the map canvas (a real QgsMapCanvas widget
+    # defers resize handling to its event loop, which makes pixel<->map
+    # transforms unpredictable in headless tests).
+    # 200x100 px grid showing a 200x100 map-unit extent -> 1 unit/px
+    return polygon_maker_module.PixelGrid(200, 100, QgsRectangle(0, 0, 200, 100))
 
 
 @pytest.fixture

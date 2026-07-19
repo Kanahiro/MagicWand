@@ -5,6 +5,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsFeature,
     QgsGeometry,
+    QgsMapToPixel,
     QgsProject,
     QgsRectangle,
     QgsVectorLayer,
@@ -20,6 +21,37 @@ POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 # unlike distance-based Douglas-Peucker, which clips corners depending
 # on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
+
+
+class PixelGrid:
+    """Pixel<->map transform context for PolygonMaker.
+
+    Stands in for the map canvas: PolygonMaker only needs the pixel
+    width, the map units per pixel, and the pixel->map transform, so
+    any georeferenced pixel grid (e.g. a raster) works as an input.
+    Assumes square pixels.
+    """
+
+    def __init__(self, width: int, height: int, extent: QgsRectangle):
+        self._width = width
+        self._map_units_per_pixel = extent.width() / width
+        self._transform = QgsMapToPixel(
+            self._map_units_per_pixel,
+            extent.center().x(),
+            extent.center().y(),
+            width,
+            height,
+            0,
+        )
+
+    def width(self) -> int:
+        return self._width
+
+    def mapUnitsPerPixel(self) -> float:
+        return self._map_units_per_pixel
+
+    def getCoordinateTransform(self) -> QgsMapToPixel:
+        return self._transform
 
 
 def add_features_to_layer(

@@ -133,11 +133,22 @@ class ImageAnalyzer:
             resize_multiply = min(1.0, (MAX_ANALYSIS_PIXELS / pixels) ** 0.5)
 
         tolerance = threshold_to_tolerance(threshold)
-        lab = bgr_to_lab(self.to_ndarray(resize_multiply))
-        height, width = lab.shape[:2]
+        bgr = self.to_ndarray(resize_multiply)
 
-        seed_x = int(point.x() * width / self.image.width())
-        seed_y = int(point.y() * height / self.image.height())
+        seed_x = int(point.x() * bgr.shape[1] / self.image.width())
+        seed_y = int(point.y() * bgr.shape[0] / self.image.height())
+        return self.mask_from_bgr(bgr, seed_x, seed_y, tolerance)
+
+    def mask_from_bgr(
+        self, bgr: np.ndarray, seed_x: int, seed_y: int, tolerance: float
+    ) -> np.ndarray:
+        """Select the region around a seed pixel in a BGR uint8 array.
+
+        The image-independent core of the magic wand, also used by the
+        processing algorithm. `tolerance` is a CIELAB delta-E value.
+        """
+        lab = bgr_to_lab(bgr)
+        height, width = lab.shape[:2]
         if not (0 <= seed_x < width and 0 <= seed_y < height):
             return np.zeros((height, width), dtype=bool)
 
