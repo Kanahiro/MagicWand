@@ -13,6 +13,14 @@ from qgis import processing
 
 POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 
+# vertex thinning tolerance, in mask-cell sizes. Simplification is
+# area-based (Visvalingam-Whyatt): a pixel staircase is a run of tiny
+# triangles of half a cell's area, so a threshold of one cell removes
+# them reliably while real corners (much larger triangles) survive —
+# unlike distance-based Douglas-Peucker, which clips corners depending
+# on where the ring happens to start
+SIMPLIFY_TOLERANCE_CELLS = 1.0
+
 
 def add_features_to_layer(
     features: list[QgsFeature],
@@ -63,13 +71,23 @@ class PolygonMaker:
         if not denoised_features:
             return []
         denoised_layer = self.make_layer_by(denoised_features, crs)
+
+        cell_size = self.minimum_area**0.5
+        simplified_layer = processing.run(
+            "native:simplifygeometries",
+            {
+                "INPUT": denoised_layer,
+                "METHOD": 2,  # area-based (Visvalingam-Whyatt)
+                "TOLERANCE": cell_size * SIMPLIFY_TOLERANCE_CELLS,
+                "OUTPUT": "memory:",
+            },
+        )["OUTPUT"]
         cleaned_layer = processing.run(
             "native:deleteholes",
             {
-                "INPUT": denoised_layer,
-                "MIN_AREA": self.minimum_area
-                * self.size_multiply
-                * self.noise_multiply,
+                "INPUT": simplified_layer,
+                # holes and specks share the same area threshold
+                "MIN_AREA": self.minimum_area * self.noise_multiply,
                 "OUTPUT": "memory:",
             },
         )["OUTPUT"]
@@ -156,21 +174,10 @@ class PolygonMaker:
         features_layer.updateExtents()
         return features_layer
 
-    def noise_reduction(
-        self, features, noise_multiply: float, torel_multiply: float = 2.5
-    ) -> list[QgsFeature]:
-        output = []
-        torelance = (
-            self.map_canvas.mapUnitsPerPixel()
-            * torel_multiply
-            * self.size_multiply**0.6
-        )
-        for feature in features:
-            if feature.geometry().area() < self.minimum_area * noise_multiply:
-                continue
-            output_geo = feature.geometry().simplify(torelance)
-            output_feature = QgsFeature()
-            output_feature.setGeometry(output_geo)
-            output.append(output_feature)
-
-        return output
+    def noise_reduction(self, features, noise_multiply: float) -> list[QgsFeature]:
+        """Drop features smaller than `noise_multiply` mask cells."""
+        return [
+            feature
+            for feature in features
+            if feature.geometry().area() >= self.minimum_area * noise_multiply
+        ]

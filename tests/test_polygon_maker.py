@@ -126,7 +126,7 @@ class TestBuildPolygons:
         features = maker.build_polygons(crs=CRS)
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(5400, rel=0.15)
+        assert features[0].geometry().area() == pytest.approx(5400)
         # preview computation must not add layers to the project
         assert len(QgsProject.instance().mapLayers()) == 0
 
@@ -135,6 +135,27 @@ class TestBuildPolygons:
         maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
 
         assert maker.build_polygons(crs=CRS) == []
+
+
+@pytest.mark.usefixtures("native_processing", "qgis_new_project")
+class TestSimplification:
+    def test_staircase_boundary_is_thinned(self, canvas, polygon_maker_module):
+        # a pixel staircase (lower-left triangle of cells): the raw
+        # dissolved boundary has ~2 vertices per stair step; thinning
+        # should collapse it towards the diagonal without losing area
+        bin_index = np.zeros((10, 20), dtype=bool)
+        for y in range(10):
+            bin_index[y, : y + 1] = True  # 1+2+...+10 = 55 cells
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+
+        features = maker.build_polygons(crs=CRS)
+
+        assert len(features) == 1
+        geometry = features[0].geometry()
+        assert geometry.area() == pytest.approx(5500, rel=0.1)
+        # raw staircase ring has ~23 vertices; the thinned ring must be
+        # substantially lighter
+        assert geometry.constGet().nCoordinates() <= 12
 
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
@@ -180,8 +201,9 @@ class TestMakePolygons:
         assert layer.name() == "magic_wand"
         features = list(layer.getFeatures())
         assert len(features) == 1
-        # 54 cells x (10x10) map units; simplify may shave corners a little
-        assert features[0].geometry().area() == pytest.approx(5400, rel=0.15)
+        # 54 cells x (10x10) map units; the rectangle survives
+        # simplification exactly (area-based thinning keeps corners)
+        assert features[0].geometry().area() == pytest.approx(5400)
 
     def test_appends_to_existing_layer(self, canvas, polygon_maker_module):
         existing = QgsVectorLayer(f"Polygon?crs={CRS.authid()}", "existing", "memory")
