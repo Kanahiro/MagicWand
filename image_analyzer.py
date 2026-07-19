@@ -3,8 +3,20 @@ import numpy as np
 from qgis.PyQt.QtCore import QPoint
 from qgis.PyQt.QtGui import QImage
 
-# slider threshold (10-90) -> CIELAB delta-E tolerance (3-27)
-DELTA_E_PER_THRESHOLD = 0.3
+# slider-derived threshold (10-90) -> CIELAB delta-E tolerance.
+# Geometric mapping: every slider step scales the tolerance by a constant
+# factor, so the strict half of the range stays fine-grained (delta-E
+# ~1-3.5, right for flat map colors) while the ambiguous half still
+# reaches photo-friendly values
+TOLERANCE_MIN = 1.0  # threshold 10 (strictest)
+TOLERANCE_MAX = 12.0  # threshold 90 (loosest)
+
+
+def threshold_to_tolerance(threshold: float) -> float:
+    position = min(max((threshold - 10) / 80, 0.0), 1.0)
+    return TOLERANCE_MIN * (TOLERANCE_MAX / TOLERANCE_MIN) ** position
+
+
 # analysis resolution is chosen automatically: full canvas resolution,
 # downscaled only when the canvas exceeds this many pixels (e.g. 4K)
 MAX_ANALYSIS_PIXELS = 2_000_000
@@ -120,7 +132,7 @@ class ImageAnalyzer:
             pixels = self.image.width() * self.image.height()
             resize_multiply = min(1.0, (MAX_ANALYSIS_PIXELS / pixels) ** 0.5)
 
-        tolerance = threshold * DELTA_E_PER_THRESHOLD
+        tolerance = threshold_to_tolerance(threshold)
         lab = bgr_to_lab(self.to_ndarray(resize_multiply))
         height, width = lab.shape[:2]
 

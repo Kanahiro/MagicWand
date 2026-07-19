@@ -30,6 +30,7 @@ changelog=2.0.0
     - Clicking now shows a tentative polygon with a confirmation dialog: adjust the Color Threshold while watching the result, then confirm to save (polygons are no longer created immediately on click)
     - Fix runaway selection at loose Color Threshold: the gradient-growing edge tolerance is now a small fixed value instead of scaling with the slider, and the growth cap is tightened
     - The reference color is refined from region statistics: it starts as the median of a small patch around the click and is re-anchored once to the selected region's median color, so the result no longer depends on the exact pixel that was clicked
+    - Rescale the Color Threshold: the slider now maps geometrically to delta-E 1-12 (the old strictest setting sits at the middle), compensating for the extra reach the refinement and gradient growing added
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file
     - Use native: processing algorithms instead of deprecated qgis: ones

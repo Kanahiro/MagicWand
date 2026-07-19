@@ -5,11 +5,12 @@ from collections import deque
 import numpy as np
 import pytest
 from plugin_dir.image_analyzer import (
-    DELTA_E_PER_THRESHOLD,
+    EDGE_TOLERANCE,
     GRADIENT_CAP_RATIO,
     MAX_ANALYSIS_PIXELS,
     ImageAnalyzer,
     bgr_to_lab,
+    threshold_to_tolerance,
 )
 from qgis.PyQt.QtCore import QPoint
 from qgis.PyQt.QtGui import QColor, QImage
@@ -152,16 +153,16 @@ def gray_delta_e(value_a: int, value_b: int) -> float:
 
 class TestGradientGrowing:
     THRESHOLD = 50
-    TOLERANCE = THRESHOLD * DELTA_E_PER_THRESHOLD  # 15
-    CAP = TOLERANCE * GRADIENT_CAP_RATIO  # 30
+    TOLERANCE = threshold_to_tolerance(THRESHOLD)  # ~3.5
+    CAP = TOLERANCE * GRADIENT_CAP_RATIO  # ~5.2
 
     def test_smooth_gradient_is_followed_beyond_tolerance(self):
-        # columns 0..50: smooth gray gradient 100 -> 150 (~0.4 dE per step);
+        # columns 0..12: smooth gray gradient 100 -> 112 (~0.4 dE per step);
         # remaining columns: flat 220 behind a sharp jump
-        gradient_width = 51
+        gradient_width = 13
         values = [100 + x for x in range(gradient_width)] + [220] * 20
         # total gradient span exceeds the plain tolerance but stays under the cap
-        assert self.TOLERANCE < gray_delta_e(100, 150) < self.CAP
+        assert self.TOLERANCE < gray_delta_e(100, 112) < self.CAP
         image = gray_image(len(values), 10, values)
 
         mask = ImageAnalyzer(image).to_binary(
@@ -173,8 +174,8 @@ class TestGradientGrowing:
 
     def test_sharp_edge_within_cap_is_not_crossed(self):
         # two flat regions; the second is within the cap but the edge is sharp
-        assert self.TOLERANCE < gray_delta_e(100, 140) < self.CAP
-        image = gray_image(40, 10, [100] * 20 + [140] * 20)
+        assert self.TOLERANCE < gray_delta_e(100, 112) < self.CAP
+        image = gray_image(40, 10, [100] * 20 + [112] * 20)
 
         mask = ImageAnalyzer(image).to_binary(
             QPoint(5, 5), resize_multiply=1.0, threshold=self.THRESHOLD
@@ -197,7 +198,7 @@ class TestGradientGrowing:
         image = gray_image(len(values), 10, values)
 
         loose_threshold = 90  # most ambiguous slider position
-        tolerance = loose_threshold * DELTA_E_PER_THRESHOLD
+        tolerance = threshold_to_tolerance(loose_threshold)
         # regions 3 and 4 are far beyond the tolerance of region 1
         assert gray_delta_e(80, 180) > tolerance
         assert gray_delta_e(80, 230) > tolerance
@@ -229,22 +230,25 @@ class TestGradientGrowing:
 
 
 class TestSeedRefinement:
-    THRESHOLD = 50
-    TOLERANCE = THRESHOLD * DELTA_E_PER_THRESHOLD  # 15
+    THRESHOLD = 70
+    TOLERANCE = threshold_to_tolerance(THRESHOLD)  # ~6.4
 
     def _banded_image(self) -> QImage:
         # one visual region made of three shades, next to a distinct
-        # background: bands 100 / 118 / 140 (20 columns each), then 230
-        values = [100] * 20 + [118] * 20 + [140] * 20 + [230] * 20
+        # background: bands 100 / 110 / 120 (20 columns each), then 230
+        values = [100] * 20 + [110] * 20 + [120] * 20 + [230] * 20
         return gray_image(len(values), 10, values)
 
     def _preconditions(self):
         # neighboring shades are within tolerance, the extreme shades are
         # not: anchoring on the clicked pixel alone cannot select all
-        # three bands, re-anchoring on the region median can
-        assert gray_delta_e(100, 118) < self.TOLERANCE
-        assert gray_delta_e(118, 140) < self.TOLERANCE
-        assert gray_delta_e(100, 140) > self.TOLERANCE
+        # three bands, re-anchoring on the region median can. The band
+        # edges are also too sharp for gradient growing to walk across
+        assert gray_delta_e(100, 110) < self.TOLERANCE
+        assert gray_delta_e(110, 120) < self.TOLERANCE
+        assert gray_delta_e(100, 120) > self.TOLERANCE
+        assert gray_delta_e(100, 110) > EDGE_TOLERANCE
+        assert gray_delta_e(110, 120) > EDGE_TOLERANCE
 
     def test_selection_converges_to_the_whole_region(self):
         self._preconditions()
