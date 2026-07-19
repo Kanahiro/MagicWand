@@ -10,6 +10,7 @@ Supports QGIS 3.44 or later, including QGIS 4.x (Qt6).
 - Click mapcanvas where you want to make polygon: a tentative polygon is shown semi-transparently, like the magic wand tool of image editors.
 - A confirmation dialog opens; adjust the Color Threshold while watching the tentative polygon, then press OK to save it (Cancel discards it).
 - Check Skip Preview to save polygons immediately on click, without the tentative polygon and its confirmation dialog.
+- Polygons are added as layer edits (one undo step per click): press Ctrl+Z to undo a creation, and save the layer edits to make them permanent.
 - The polygon is traced from the area connected to the clicked point (flood fill). Colors are compared perceptually (CIELAB delta-E), and the selection follows smooth gradients (region growing) while sharp color edges stop it.
 
 # Development

@@ -34,6 +34,7 @@ changelog=2.0.0
     - Add a Skip Preview toggle to save polygons immediately on click, bypassing the confirmation dialog
     - Tidy up the dock widget: the stateless Enable button is now "Start Magic Wand", the output layer combo has a label, and a newly created layer stays selected as the target of subsequent clicks
     - Replace Douglas-Peucker vertex thinning with area-based Visvalingam-Whyatt simplification: pixel staircases collapse cleanly while real corners are preserved (Douglas-Peucker used to clip corners near the ring start)
+    - Polygons are added through the layer's edit session, one undo command per click: press Ctrl+Z to undo a creation (edits stay uncommitted until you save the layer)
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file
     - Use native: processing algorithms instead of deprecated qgis: ones

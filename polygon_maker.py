@@ -28,7 +28,11 @@ def add_features_to_layer(
     layer_id: str | None = None,
 ) -> QgsVectorLayer:
     """Append features to the layer with `layer_id`, or to a newly
-    created memory layer when no (existing) layer is given."""
+    created memory layer when no (existing) layer is given.
+
+    Features are added through the layer's edit buffer as a single edit
+    command, so each call can be undone with Ctrl+Z (the edits stay
+    uncommitted until the user saves the layer)."""
     output = None
     if layer_id:
         output = QgsProject.instance().mapLayer(layer_id)
@@ -36,7 +40,15 @@ def add_features_to_layer(
         output = QgsVectorLayer(f"Polygon?crs={crs.authid()}", "magic_wand", "memory")
         QgsProject.instance().addMapLayer(output)
 
-    output.dataProvider().addFeatures(features)
+    if output.isEditable() or output.startEditing():
+        output.beginEditCommand("Magic Wand: add polygon")
+        output.addFeatures(features)
+        output.endEditCommand()
+    else:
+        # layer cannot enter an edit session (e.g. read-only source);
+        # fall back to a direct provider write without undo support
+        output.dataProvider().addFeatures(features)
+
     output.updateExtents()
     output.triggerRepaint()
     return output

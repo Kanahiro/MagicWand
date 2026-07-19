@@ -185,6 +185,24 @@ class TestAddFeaturesToLayer:
 
         assert layer is existing
 
+    def test_each_call_is_one_undo_step(self, canvas, polygon_maker_module):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        features = maker.build_polygons(crs=CRS)
+
+        layer = polygon_maker_module.add_features_to_layer(features, CRS)
+        polygon_maker_module.add_features_to_layer(features, CRS, layer.id())
+
+        # features go through the edit buffer, one command per call
+        assert layer.isEditable()
+        assert layer.featureCount() == 2
+
+        layer.undoStack().undo()
+        assert layer.featureCount() == 1
+        layer.undoStack().undo()
+        assert layer.featureCount() == 0
+
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
 class TestMakePolygons:

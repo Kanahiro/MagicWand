@@ -256,6 +256,8 @@ class Magicwand:
         index = self.dockwidget.layerComboBox.findData(output_layer.id())
         if index >= 0:
             self.dockwidget.layerComboBox.setCurrentIndex(index)
+        # make Ctrl+Z reach this layer's undo stack right away
+        self.iface.setActiveLayer(output_layer)
         self.canvas.refreshAllLayers()
 
     # ------------------------------------------------------- tentative polygon
