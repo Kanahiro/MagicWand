@@ -41,8 +41,9 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
 
     One seed feature = one magic-wand selection = one output feature:
     every point of a (multi)point seed feature contributes to the same
-    selection (masks are OR-combined before polygonization), exactly
-    like the interactive tool's Add Point button. Pair it with the
+    selection — the seed colors form one combined color model and the
+    flood fill grows from all points at once — exactly like clicking
+    multiple points in the interactive tool's preview. Pair it with the
     built-in "Convert map to raster" algorithm to reproduce the
     interactive behavior in models and batch runs.
     """
@@ -66,8 +67,10 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
             "and outputs one multipolygon feature tagged with the seed's "
             "id.\n\n"
             "One seed feature is one selection: all points of a "
-            "multipoint feature contribute to the same selection, like "
-            "the Add Point button of the interactive tool. Use one "
+            "multipoint feature feed one combined color model — a pixel "
+            "matches when it is close to the nearest of the seed colors "
+            "and connected to any of the points — like clicking multiple "
+            "points in the interactive tool's preview. Use one "
             "single-point feature per region to get one polygon per "
             "point.\n\n"
             "The input must be an 8-bit raster with at least 3 bands "
@@ -177,19 +180,16 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
                 else [geometry.asPoint()]
             )
 
-            # one selection per seed feature: the masks of all its points
-            # are OR-combined before polygonization, like the interactive
-            # tool's Add Point button
-            mask: np.ndarray | None = None
+            # one selection per seed feature: all its points feed one
+            # combined color model and the flood fill grows from all of
+            # them at once, like multiple clicks in the interactive preview
+            pixel_seeds = []
             for point in points:
                 device = to_pixel.transform(point)
-                point_mask = analyzer.mask_from_bgr(
-                    bgr, int(device.x()), int(device.y()), tolerance
-                )
-                if point_mask.any():
-                    mask = point_mask if mask is None else mask | point_mask
+                pixel_seeds.append((int(device.x()), int(device.y())))
+            mask = analyzer.mask_from_bgr_multi(bgr, pixel_seeds, tolerance)
 
-            if mask is None or not mask.any():
+            if not mask.any():
                 feedback.pushInfo(f"Seed {seed.id()}: no region found, skipped")
             else:
                 parts = PolygonMaker(grid, mask).build_polygons(crs=raster.crs())

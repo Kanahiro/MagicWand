@@ -37,10 +37,10 @@ class MagicwandDockWidget(QDockWidget):
         self.start_button.setIcon(QIcon(icon_path))
         self.start_button.setToolTip("Start Magic Wand")
         self.layerComboBox = QComboBox()
-        self.skip_preview_checkbox = QCheckBox("Skip Preview")
-        self.skip_preview_checkbox.setToolTip(
-            "Create polygons immediately on click, without the tentative "
-            "polygon and its confirmation dialog"
+        self.one_click_checkbox = QCheckBox("1 click mode")
+        self.one_click_checkbox.setToolTip(
+            "Create the polygon immediately on a single click, without "
+            "the tentative polygon and its confirmation dialog"
         )
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
         configure_threshold_slider(self.threshold_slider)
@@ -60,7 +60,7 @@ class MagicwandDockWidget(QDockWidget):
         layout.addWidget(self.threshold_slider, 1)
         layout.addWidget(QLabel("Strict"))
         layout.addSpacing(12)
-        layout.addWidget(self.skip_preview_checkbox)
+        layout.addWidget(self.one_click_checkbox)
 
         layout.setContentsMargins(6, 2, 6, 2)
 

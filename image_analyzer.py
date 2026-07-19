@@ -128,6 +128,18 @@ class ImageAnalyzer:
         `resize_multiply` is chosen automatically when omitted: full
         resolution, downscaled only for very large canvases.
         """
+        return self.to_binary_multi([point], threshold, resize_multiply)
+
+    def to_binary_multi(
+        self,
+        points: list[QPoint],
+        threshold: float = 50,
+        resize_multiply: float | None = None,
+    ) -> np.ndarray:
+        """Binarize the canvas into "the region the user selected" from
+        one or more seed points, combined into a single color model
+        (see mask_from_bgr_multi). With a single point this is exactly
+        to_binary."""
         if resize_multiply is None:
             pixels = self.image.width() * self.image.height()
             resize_multiply = min(1.0, (MAX_ANALYSIS_PIXELS / pixels) ** 0.5)
@@ -135,9 +147,14 @@ class ImageAnalyzer:
         tolerance = threshold_to_tolerance(threshold)
         bgr = self.to_ndarray(resize_multiply)
 
-        seed_x = int(point.x() * bgr.shape[1] / self.image.width())
-        seed_y = int(point.y() * bgr.shape[0] / self.image.height())
-        return self.mask_from_bgr(bgr, seed_x, seed_y, tolerance)
+        seeds = [
+            (
+                int(point.x() * bgr.shape[1] / self.image.width()),
+                int(point.y() * bgr.shape[0] / self.image.height()),
+            )
+            for point in points
+        ]
+        return self.mask_from_bgr_multi(bgr, seeds, tolerance)
 
     def mask_from_bgr(
         self, bgr: np.ndarray, seed_x: int, seed_y: int, tolerance: float
@@ -177,6 +194,50 @@ class ImageAnalyzer:
                 break
         return region
 
+    def mask_from_bgr_multi(
+        self, bgr: np.ndarray, seeds: list[tuple[int, int]], tolerance: float
+    ) -> np.ndarray:
+        """Select the region around one or more seed pixels in a BGR
+        uint8 array.
+
+        All seed colors form one combined color model: a pixel belongs
+        to the core when its delta-E to the *nearest* seed color is
+        below the tolerance, and the selection is the union of the
+        core's connected components containing a seed (multi-source
+        flood fill), grown over smooth gradients like the single-seed
+        selection.
+
+        This is a near-superset of OR-combining independent single-seed
+        selections: a region matching one seed's color that is only
+        connected *through* another seed's color joins the selection too.
+
+        A single seed delegates to mask_from_bgr, including its
+        reference re-anchoring; with several seeds the re-anchoring is
+        skipped — the seeds themselves anchor the color model.
+        """
+        height, width = bgr.shape[:2]
+        in_bounds = list(
+            dict.fromkeys(
+                (x, y) for x, y in seeds if 0 <= x < width and 0 <= y < height
+            )
+        )
+        if not in_bounds:
+            return np.zeros((height, width), dtype=bool)
+        if len(in_bounds) == 1:
+            return self.mask_from_bgr(bgr, *in_bounds[0], tolerance)
+
+        lab = bgr_to_lab(bgr)
+        delta_e = np.full(lab.shape[:2], np.inf)
+        for seed_x, seed_y in in_bounds:
+            reference = self.seed_patch_median(lab, seed_x, seed_y)
+            np.minimum(delta_e, np.linalg.norm(lab - reference, axis=2), out=delta_e)
+
+        core = delta_e < tolerance
+        region, anchors = self.flood_fill_components(core, in_bounds)
+        if not region.any():
+            return region
+        return self.grow_over_gradients(region, lab, delta_e, tolerance, anchors)
+
     def binarize(
         self,
         lab: np.ndarray,
@@ -215,6 +276,7 @@ class ImageAnalyzer:
         lab: np.ndarray,
         delta_e_seed: np.ndarray,
         tolerance: float,
+        anchors: list[tuple[int, int]] | None = None,
     ) -> np.ndarray:
         """Grow `region` over smooth color gradients.
 
@@ -223,14 +285,21 @@ class ImageAnalyzer:
         as it stays within GRADIENT_CAP_RATIO * tolerance of the seed color.
         Anti-aliased boundaries between distinct colors produce large
         per-pixel steps, so they stop the growth naturally.
+
+        `anchors` names one region pixel per connected component; multi-
+        seed regions may have several. By default the region is assumed
+        to be a single component.
         """
         edge_tolerance = EDGE_TOLERANCE
         cap = delta_e_seed < tolerance * GRADIENT_CAP_RATIO
 
-        # growth can never leave the connected cap area around the region,
-        # so restrict the iteration to its bounding box
-        region_ys, region_xs = np.nonzero(region)
-        envelope = self.flood_fill_component(cap, int(region_xs[0]), int(region_ys[0]))
+        # growth can never leave the connected cap areas around the region
+        # (region pixels always lie in the cap), so restrict the iteration
+        # to their bounding box
+        if anchors is None:
+            region_ys, region_xs = np.nonzero(region)
+            anchors = [(int(region_xs[0]), int(region_ys[0]))]
+        envelope, _ = self.flood_fill_components(cap, anchors)
         env_ys, env_xs = np.nonzero(envelope)
         y0, y1 = env_ys.min(), env_ys.max() + 1
         x0, x1 = env_xs.min(), env_xs.max() + 1
@@ -263,21 +332,39 @@ class ImageAnalyzer:
     def flood_fill_component(
         self, mask: np.ndarray, seed_x: int, seed_y: int
     ) -> np.ndarray:
-        """Extract the 4-connected component of `mask` containing the seed pixel.
+        """Extract the 4-connected component of `mask` containing the seed pixel."""
+        component, _ = self.flood_fill_components(mask, [(seed_x, seed_y)])
+        return component
+
+    def flood_fill_components(
+        self, mask: np.ndarray, seeds: list[tuple[int, int]]
+    ) -> tuple[np.ndarray, list[tuple[int, int]]]:
+        """Union of the 4-connected components of `mask` containing any seed.
+
+        Returns (component_mask, anchors) where `anchors` holds one pixel
+        of each selected component, usable as flood seeds elsewhere.
+        Seeds outside the mask snap to a nearby True pixel (resizing may
+        shift a clicked pixel off the mask); seeds with none nearby are
+        ignored.
 
         Works on horizontal runs of True pixels with union-find, so the cost
         scales with the number of runs, not the number of pixels.
         """
         height, width = mask.shape
         empty = np.zeros_like(mask)
-        if not (0 <= seed_y < height and 0 <= seed_x < width):
-            return empty
-        if not mask[seed_y, seed_x]:
-            # resizing may shift the clicked pixel off the mask; look nearby
-            seed = self.find_nearby_seed(mask, seed_x, seed_y)
-            if seed is None:
-                return empty
-            seed_x, seed_y = seed
+
+        seeds_by_row: dict[int, list[int]] = {}
+        for seed_x, seed_y in seeds:
+            if not (0 <= seed_y < height and 0 <= seed_x < width):
+                continue
+            if not mask[seed_y, seed_x]:
+                seed = self.find_nearby_seed(mask, seed_x, seed_y)
+                if seed is None:
+                    continue
+                seed_x, seed_y = seed
+            seeds_by_row.setdefault(seed_y, []).append(seed_x)
+        if not seeds_by_row:
+            return empty, []
 
         parent: list[int] = []
 
@@ -295,7 +382,7 @@ class ImageAnalyzer:
 
         rows = []
         prev_starts = prev_ends = prev_ids = None
-        seed_run = -1
+        seed_runs: list[int] = []
         for y in range(height):
             diff = np.diff(mask[y].astype(np.int8), prepend=0, append=0)
             starts = np.flatnonzero(diff == 1)
@@ -304,10 +391,10 @@ class ImageAnalyzer:
             parent.extend(ids)
             rows.append((y, starts, ends, ids))
 
-            if y == seed_y:
+            for seed_x in seeds_by_row.get(y, ()):
                 idx = int(np.searchsorted(starts, seed_x, side="right")) - 1
                 if idx >= 0 and ends[idx] > seed_x:
-                    seed_run = ids[idx]
+                    seed_runs.append(ids[idx])
 
             # merge runs overlapping a run in the previous row (4-connectivity)
             if prev_starts is not None:
@@ -321,16 +408,20 @@ class ImageAnalyzer:
                         j += 1
             prev_starts, prev_ends, prev_ids = starts, ends, ids
 
-        if seed_run < 0:
-            return empty
+        if not seed_runs:
+            return empty, []
 
-        seed_root = find(seed_run)
+        seed_roots = {find(run) for run in seed_runs}
         component = empty
+        anchors: dict[int, tuple[int, int]] = {}
         for y, starts, ends, ids in rows:
             for k in range(len(ids)):
-                if find(ids[k]) == seed_root:
+                root = find(ids[k])
+                if root in seed_roots:
                     component[y, starts[k] : ends[k]] = True
-        return component
+                    if root not in anchors:
+                        anchors[root] = (int(starts[k]), y)
+        return component, list(anchors.values())
 
     def find_nearby_seed(
         self, mask: np.ndarray, seed_x: int, seed_y: int, radius: int = 3

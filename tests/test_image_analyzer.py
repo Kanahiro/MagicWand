@@ -119,6 +119,87 @@ class TestToBinary:
         assert mask.sum() == pytest.approx(expected_area, rel=0.05)
 
 
+class TestToBinaryMulti:
+    def test_single_point_matches_to_binary(self):
+        image = make_image(60, 40, [(5, 5, 10, 8), (40, 20, 12, 10)])
+        analyzer = ImageAnalyzer(image)
+
+        single = analyzer.to_binary(QPoint(8, 8), resize_multiply=1.0, threshold=50)
+        multi = analyzer.to_binary_multi(
+            [QPoint(8, 8)], resize_multiply=1.0, threshold=50
+        )
+
+        assert (single == multi).all()
+
+    def test_disjoint_seeds_select_the_union(self):
+        image = make_image(60, 40, [(5, 5, 10, 8), (40, 20, 12, 10)])
+        analyzer = ImageAnalyzer(image)
+
+        mask = analyzer.to_binary_multi(
+            [QPoint(8, 8), QPoint(45, 25)], resize_multiply=1.0, threshold=50
+        )
+
+        assert mask[8, 8] and mask[25, 45]
+        assert mask.sum() == 10 * 8 + 12 * 10
+
+    def test_region_connected_through_another_seed_color_is_selected(self):
+        # three bands A B A'; seeds in A and B. Selecting each seed
+        # independently and OR-combining cannot reach A' (same color as
+        # A but only connected through B); the combined color model can.
+        values = [100] * 10 + [200] * 10 + [100] * 10
+        image = gray_image(len(values), 10, values)
+        analyzer = ImageAnalyzer(image)
+
+        or_combined = analyzer.to_binary(
+            QPoint(5, 5), resize_multiply=1.0, threshold=50
+        ) | analyzer.to_binary(QPoint(15, 5), resize_multiply=1.0, threshold=50)
+        combined_model = analyzer.to_binary_multi(
+            [QPoint(5, 5), QPoint(15, 5)], resize_multiply=1.0, threshold=50
+        )
+
+        assert not or_combined[:, 20:].any()  # A' unreachable per seed
+        assert combined_model.all()  # A, B and A' all selected
+
+    def test_out_of_bounds_seeds_are_ignored(self):
+        image = make_image(30, 20, [(10, 5, 5, 5)])
+        analyzer = ImageAnalyzer(image)
+
+        mask = analyzer.to_binary_multi(
+            [QPoint(12, 7), QPoint(500, 500)], resize_multiply=1.0, threshold=50
+        )
+
+        assert mask.sum() == 5 * 5
+
+    def test_all_seeds_out_of_bounds_returns_empty(self):
+        image = make_image(30, 20, [(10, 5, 5, 5)])
+        analyzer = ImageAnalyzer(image)
+
+        mask = analyzer.to_binary_multi(
+            [QPoint(-5, -5), QPoint(500, 500)], resize_multiply=1.0, threshold=50
+        )
+
+        assert mask.shape == (20, 30)
+        assert not mask.any()
+
+    def test_gradients_grow_from_every_seed_component(self):
+        # two disjoint smooth gradients separated by a sharp band of a
+        # distinct color: gradient growing must run on both components
+        threshold = 50
+        tolerance = threshold_to_tolerance(threshold)
+        gradient = [100 + x for x in range(13)]
+        assert tolerance < gray_delta_e(100, 112) < tolerance * GRADIENT_CAP_RATIO
+        values = gradient + [220] * 10 + gradient
+        image = gray_image(len(values), 10, values)
+
+        mask = ImageAnalyzer(image).to_binary_multi(
+            [QPoint(0, 5), QPoint(23, 5)], resize_multiply=1.0, threshold=threshold
+        )
+
+        assert mask[:, :13].all()  # first gradient fully grown
+        assert mask[:, 23:].all()  # second gradient fully grown
+        assert not mask[:, 13:23].any()  # the separating band is excluded
+
+
 class TestBgrToLab:
     def test_reference_colors(self):
         lab = bgr_to_lab(
@@ -408,6 +489,82 @@ class TestFloodFillComponent:
                     out[ny, nx] = True
                     queue.append((nx, ny))
         return out
+
+
+class TestFloodFillComponents:
+    def setup_method(self):
+        self.analyzer = ImageAnalyzer(None)
+
+    def test_selects_the_components_of_all_seeds(self):
+        mask = str_mask(
+            [
+                "##..##",
+                "##..##",
+                "......",
+                "..##..",
+            ]
+        )
+        out, anchors = self.analyzer.flood_fill_components(mask, [(0, 0), (2, 3)])
+        assert (
+            out
+            == str_mask(
+                [
+                    "##....",
+                    "##....",
+                    "......",
+                    "..##..",
+                ]
+            )
+        ).all()
+        # one anchor per selected component, each inside the output
+        assert len(anchors) == 2
+        assert all(out[y, x] for x, y in anchors)
+
+    def test_seeds_in_the_same_component_yield_one_anchor(self):
+        mask = str_mask(
+            [
+                "#####",
+                ".....",
+                "#####",
+            ]
+        )
+        out, anchors = self.analyzer.flood_fill_components(mask, [(0, 0), (4, 0)])
+        assert (out == str_mask(["#####", ".....", "....."])).all()
+        assert len(anchors) == 1
+
+    def test_seed_on_false_pixel_snaps_to_nearby(self):
+        mask = str_mask(
+            [
+                ".....",
+                ".###.",
+                ".....",
+            ]
+        )
+        out, anchors = self.analyzer.flood_fill_components(mask, [(0, 0)])
+        assert out.sum() == 3
+        assert len(anchors) == 1
+
+    def test_unreachable_and_out_of_bounds_seeds_are_ignored(self):
+        mask = str_mask(
+            [
+                "##........",
+                "##........",
+                "..........",
+                ".........#",
+            ]
+        )
+        out, anchors = self.analyzer.flood_fill_components(
+            mask, [(0, 0), (5, 2), (99, 99)]
+        )
+        assert out.sum() == 4  # only the seeded 2x2 block
+        assert len(anchors) == 1
+
+    def test_no_valid_seed_returns_empty(self):
+        mask = np.zeros((5, 5), dtype=bool)
+        mask[4, 4] = True
+        out, anchors = self.analyzer.flood_fill_components(mask, [(0, 0)])
+        assert not out.any()
+        assert anchors == []
 
 
 class TestFindNearbySeed:

@@ -1,5 +1,3 @@
-import numpy as np
-
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsFeature,
@@ -30,24 +28,25 @@ def build_multi_seed_features(
     slider_value: int,
     crs: QgsCoordinateReferenceSystem,
 ) -> list[QgsFeature]:
-    """Union of the magic-wand selections of all seed points, polygonized.
+    """The magic-wand selection of all seed points together, polygonized.
 
-    Masks are OR-combined before polygonization, so overlapping
-    selections dissolve into one polygon and disjoint ones become
-    separate features.
+    The seed colors form one combined color model and the flood fill
+    grows from all points at once (see ImageAnalyzer.mask_from_bgr_multi):
+    overlapping selections dissolve into one polygon and disjoint ones
+    become separate features.
     """
+    if not seeds:
+        return []
+
     threshold = 100 - slider_value
     to_pixel = grid.getCoordinateTransform()
-
-    mask: np.ndarray | None = None
+    points = []
     for map_point in seeds:
         device = to_pixel.transform(map_point)
-        seed_mask = analyzer.to_binary(
-            QPoint(int(device.x()), int(device.y())), threshold
-        )
-        mask = seed_mask if mask is None else mask | seed_mask
+        points.append(QPoint(int(device.x()), int(device.y())))
 
-    if mask is None or not mask.any():
+    mask = analyzer.to_binary_multi(points, threshold)
+    if not mask.any():
         return []
     return PolygonMaker(grid, mask).build_polygons(crs)
 
@@ -57,9 +56,9 @@ class PreviewSession:
 
     Owns the canvas snapshot taken at the first click, the seed points
     (in map coordinates, so panning during the session cannot corrupt
-    them), the seed markers, and the confirm dialog. While the session
-    is open the dock widget is locked; the dialog's Add Point button
-    hands one click back to the map canvas to add a seed.
+    them), the seed markers, and the confirm dialog. The dialog stays
+    on top while the rest of the UI remains usable; every further map
+    click adds a seed point to the selection.
     """
 
     def __init__(self, plugin, image, first_widget_point: QPoint):
@@ -75,38 +74,23 @@ class PreviewSession:
         self.seeds: list[QgsPointXY] = []
         self.markers: list[QgsVertexMarker] = []
         self.features: list[QgsFeature] = []
-        self.awaiting_point = False
 
         self.dialog = ConfirmDialog(
             plugin.dockwidget.threshold_slider.value(),
             self.on_threshold_changed,
             parent=plugin.iface.mainWindow(),
         )
-        self.dialog.add_point_button.clicked.connect(self.wait_for_point)
         self.dialog.finished.connect(self.on_finished)
 
-        plugin.dockwidget.setEnabled(False)
         self.add_seed(first_widget_point)
         self.dialog.show()
 
     # ------------------------------------------------------------- seeds
 
     def handle_canvas_click(self, widget_point: QPoint) -> None:
-        """Canvas clicks reach the session only through the map tool;
-        they are ignored unless Add Point armed the session for one."""
-        if not self.awaiting_point:
-            return
-        self.awaiting_point = False
-        self.dialog.set_waiting_for_point(False)
+        """Every canvas click while the session is open adds a seed
+        point to the selection."""
         self.add_seed(widget_point)
-        # hand control back to the dialog: re-focus it so the UI is
-        # locked again and keyboard input (Enter/Esc) lands there
-        self.dialog.raise_()
-        self.dialog.activateWindow()
-
-    def wait_for_point(self) -> None:
-        self.awaiting_point = True
-        self.dialog.set_waiting_for_point(True)
 
     def add_seed(self, widget_point: QPoint) -> None:
         # record the seed in map coordinates: the snapshot transform
@@ -147,7 +131,6 @@ class PreviewSession:
         self.markers = []
 
         self.plugin.hide_tentative()
-        self.plugin.dockwidget.setEnabled(True)
         self.plugin.preview_session = None
         self.dialog.deleteLater()
 

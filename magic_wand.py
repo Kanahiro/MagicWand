@@ -222,17 +222,17 @@ class Magicwand:
     # actions on mapcanvas clicked
     def click_action(self, point):
         """Open a click-to-confirm session: a tentative polygon plus a
-        dialog to tune the threshold and add more seed points before
-        saving. With Skip Preview checked the polygon is saved
-        immediately instead."""
+        dialog to tune the threshold, while further clicks add seed
+        points before saving. With 1 click mode checked the polygon is
+        saved immediately instead."""
         if self.preview_session is not None:
-            # an open session consumes canvas clicks (Add Point flow)
+            # an open session consumes canvas clicks: each adds a seed
             self.preview_session.handle_canvas_click(point)
             return
 
         image = self.make_image(self.canvas.mapSettings())
 
-        if self.dockwidget.skip_preview_checkbox.isChecked():
+        if self.dockwidget.one_click_checkbox.isChecked():
             crs = QgsProject.instance().crs()
             threshold = 100 - self.dockwidget.threshold_slider.value()
             bin_index = ImageAnalyzer(image).to_binary(point, threshold)
