@@ -3,7 +3,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDockWidget,
-    QGridLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
@@ -39,20 +39,22 @@ class MagicwandDockWidget(QDockWidget):
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
         configure_threshold_slider(self.threshold_slider)
         self.threshold_slider.setValue(DEFAULT_THRESHOLD)
+        self.threshold_slider.setToolTip("Color Threshold")
+        self.threshold_slider.setMinimumWidth(100)
+        self.layerComboBox.setToolTip("Output Layer")
+        self.layerComboBox.setMinimumWidth(120)
 
-        layout = QGridLayout()
-        layout.addWidget(self.start_button, 0, 0)
-        layout.addWidget(QLabel("Output Layer"), 0, 1)
-        layout.addWidget(self.layerComboBox, 0, 2)
-        layout.addWidget(self.skip_preview_checkbox, 0, 3, 1, 2)
-
-        layout.addWidget(QLabel("Color Threshold"), 1, 0)
-        layout.addWidget(QLabel("Ambiguous"), 1, 1)
-        layout.addWidget(self.threshold_slider, 1, 2)
-        layout.addWidget(QLabel("Strict"), 1, 3)
-
-        # let the combo box / slider column take the extra space
-        layout.setColumnStretch(2, 1)
+        # everything on a single compact row
+        layout = QHBoxLayout()
+        layout.addWidget(self.start_button)
+        layout.addWidget(QLabel("Output Layer"))
+        layout.addWidget(self.layerComboBox, 1)
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("Ambiguous"))
+        layout.addWidget(self.threshold_slider, 1)
+        layout.addWidget(QLabel("Strict"))
+        layout.addSpacing(12)
+        layout.addWidget(self.skip_preview_checkbox)
 
         contents = QWidget()
         contents.setLayout(layout)
