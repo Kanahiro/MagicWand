@@ -14,6 +14,26 @@ from qgis import processing
 POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 
 
+def add_features_to_layer(
+    features: list[QgsFeature],
+    crs: QgsCoordinateReferenceSystem,
+    layer_id: str | None = None,
+) -> QgsVectorLayer:
+    """Append features to the layer with `layer_id`, or to a newly
+    created memory layer when no (existing) layer is given."""
+    output = None
+    if layer_id:
+        output = QgsProject.instance().mapLayer(layer_id)
+    if output is None:
+        output = QgsVectorLayer(f"Polygon?crs={crs.authid()}", "magic_wand", "memory")
+        QgsProject.instance().addMapLayer(output)
+
+    output.dataProvider().addFeatures(features)
+    output.updateExtents()
+    output.triggerRepaint()
+    return output
+
+
 class PolygonMaker:
     def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
@@ -61,20 +81,7 @@ class PolygonMaker:
         cleaned_features = self.build_polygons(crs)
         if not cleaned_features:
             return
-
-        # output layer
-        output = None
-        if layer_id:
-            output = QgsProject.instance().mapLayer(layer_id)
-        if output is None:
-            output = QgsVectorLayer(
-                f"Polygon?crs={crs.authid()}", "magic_wand", "memory"
-            )
-            QgsProject.instance().addMapLayer(output)
-
-        output.dataProvider().addFeatures(cleaned_features)
-        output.updateExtents()
-        output.triggerRepaint()
+        add_features_to_layer(cleaned_features, crs, layer_id)
 
     # make rectangle geometry by pointXY on Pixels
     def make_rect(

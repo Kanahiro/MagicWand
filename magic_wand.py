@@ -1,8 +1,8 @@
 import os.path
 
-from qgis.PyQt.QtCore import QSettings, QTimer, QTranslator, QCoreApplication, Qt
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt
 from qgis.PyQt.QtGui import QColor, QIcon, QImage, QPainter
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtWidgets import QAction, QDialog
 from qgis.core import QgsProject, QgsVectorLayer, QgsMapRendererCustomPainterJob
 from qgis.gui import QgsRubberBand
 
@@ -10,15 +10,14 @@ from qgis.gui import QgsRubberBand
 from .magic_wand_dockwidget import MagicwandDockWidget
 
 from .click_tool import ClickTool
+from .confirm_dialog import ConfirmDialog
 from .image_analyzer import ImageAnalyzer
-from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY
+from .polygon_maker import PolygonMaker, POLYGON_GEOMETRY, add_features_to_layer
 
 NEW_LAYER_ITEM_DATA = 0
 
-# preview is computed only after the cursor has rested this long
-PREVIEW_DELAY_MS = 400
-PREVIEW_FILL_COLOR = QColor(255, 190, 0, 90)
-PREVIEW_STROKE_COLOR = QColor(255, 140, 0, 200)
+TENTATIVE_FILL_COLOR = QColor(255, 190, 0, 90)
+TENTATIVE_STROKE_COLOR = QColor(255, 140, 0, 200)
 
 
 class Magicwand:
@@ -62,8 +61,6 @@ class Magicwand:
         self.map_tool = None
         self.previous_map_tool = None
 
-        self.preview_timer = None
-        self.preview_point = None
         self.rubber_band = None
 
     # noinspection PyMethodMayBeStatic
@@ -169,7 +166,7 @@ class Magicwand:
     def onClosePlugin(self):
         """Cleanup necessary items here when plugin dockwidget is closed"""
 
-        self.clear_preview()
+        self.hide_tentative()
 
         # restore the map tool which was active before enabling Magic Wand
         if self.previous_map_tool is not None:
@@ -181,7 +178,7 @@ class Magicwand:
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
 
-        self.clear_preview()
+        self.hide_tentative()
         if self.rubber_band is not None:
             self.canvas.scene().removeItem(self.rubber_band)
             self.rubber_band = None
@@ -207,48 +204,50 @@ class Magicwand:
 
     # --------------------------------------------------------------------------
 
-    # build a PolygonMaker for the clicked/hovered canvas position
-    def polygon_maker_at(self, point):
-        image = self.make_image(self.canvas.mapSettings())
-        threshold = 100 - self.dockwidget.threshold_slider.value()
-        bin_index = ImageAnalyzer(image).to_binary(point, threshold)
-        return PolygonMaker(self.canvas, bin_index)
-
     # actions on mapcanvas clicked
     def click_action(self, point):
-        self.clear_preview()
+        """Show a tentative polygon for the clicked position and let the
+        user tune the threshold in a modal dialog before saving it."""
+        image = self.make_image(self.canvas.mapSettings())
+        analyzer = ImageAnalyzer(image)
+        crs = QgsProject.instance().crs()
 
-        polygon_maker = self.polygon_maker_at(point)
-        project_crs = QgsProject.instance().crs()
-        selected_layer_id = self.dockwidget.layerComboBox.currentData()
+        def build_features(slider_value):
+            threshold = 100 - slider_value
+            bin_index = analyzer.to_binary(point, threshold)
+            return PolygonMaker(self.canvas, bin_index).build_polygons(crs)
 
-        polygon_maker.make_polygons(crs=project_crs, layer_id=selected_layer_id)
+        latest = {"features": build_features(self.dockwidget.threshold_slider.value())}
+        self.show_tentative(latest["features"])
+
+        def recompute(slider_value):
+            latest["features"] = build_features(slider_value)
+            self.show_tentative(latest["features"])
+
+        dialog = ConfirmDialog(
+            self.dockwidget.threshold_slider.value(),
+            recompute,
+            parent=self.iface.mainWindow(),
+        )
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self.hide_tentative()
+        if not accepted or not latest["features"]:
+            return
+
+        # keep the confirmed threshold as the new default
+        self.dockwidget.threshold_slider.setValue(dialog.threshold())
+
+        layer_id = self.dockwidget.layerComboBox.currentData()
+        add_features_to_layer(latest["features"], crs, layer_id)
 
         selected_index = self.dockwidget.layerComboBox.currentIndex()
         self.reload_combo_box()
         self.dockwidget.layerComboBox.setCurrentIndex(selected_index)
         self.canvas.refreshAllLayers()
 
-    # ---------------------------------------------------------------- preview
+    # ------------------------------------------------------- tentative polygon
 
-    def on_canvas_move(self, point):
-        """Debounce cursor moves: the preview is computed only after the
-        cursor has been stationary for PREVIEW_DELAY_MS."""
-        if self.dockwidget is None or not self.dockwidget.preview_checkbox.isChecked():
-            return
-        self.preview_point = point
-        self.hide_preview()
-        self.preview_timer.start(PREVIEW_DELAY_MS)
-
-    def show_preview(self):
-        if self.dockwidget is None or not self.dockwidget.preview_checkbox.isChecked():
-            return
-        if self.preview_point is None:
-            return
-
-        polygon_maker = self.polygon_maker_at(self.preview_point)
-        features = polygon_maker.build_polygons(QgsProject.instance().crs())
-
+    def show_tentative(self, features):
         band = self.ensure_rubber_band()
         band.reset(POLYGON_GEOMETRY)
         for feature in features:
@@ -257,23 +256,14 @@ class Magicwand:
     def ensure_rubber_band(self):
         if self.rubber_band is None:
             self.rubber_band = QgsRubberBand(self.canvas, POLYGON_GEOMETRY)
-            self.rubber_band.setFillColor(PREVIEW_FILL_COLOR)
-            self.rubber_band.setStrokeColor(PREVIEW_STROKE_COLOR)
+            self.rubber_band.setFillColor(TENTATIVE_FILL_COLOR)
+            self.rubber_band.setStrokeColor(TENTATIVE_STROKE_COLOR)
             self.rubber_band.setWidth(2)
         return self.rubber_band
 
-    def hide_preview(self):
+    def hide_tentative(self):
         if self.rubber_band is not None:
             self.rubber_band.reset(POLYGON_GEOMETRY)
-
-    def clear_preview(self):
-        if self.preview_timer is not None:
-            self.preview_timer.stop()
-        self.hide_preview()
-
-    def on_preview_toggled(self, checked):
-        if not checked:
-            self.clear_preview()
 
     # -------------------------------------------------------------------------
 
@@ -295,16 +285,9 @@ class Magicwand:
         self.map_tool = ClickTool(
             self.iface,
             click_callback=self.click_action,
-            move_callback=self.on_canvas_move,
-            deactivated_callback=self.clear_preview,
+            deactivated_callback=self.hide_tentative,
         )
         self.canvas.setMapTool(self.map_tool)
-
-    def init_sliders(self):
-        self.dockwidget.threshold_slider.setMinimum(10)
-        self.dockwidget.threshold_slider.setMaximum(90)
-        self.dockwidget.threshold_slider.setSingleStep(10)
-        self.dockwidget.threshold_slider.setValue(50)
 
     def reload_combo_box(self):
         self.dockwidget.layerComboBox.clear()
@@ -332,17 +315,10 @@ class Magicwand:
                 # Create the dockwidget (after translation) and keep reference
                 self.dockwidget = MagicwandDockWidget()
                 self.dockwidget.enable_button.clicked.connect(self.enable_magicwand)
-                self.dockwidget.preview_checkbox.toggled.connect(
-                    self.on_preview_toggled
-                )
                 # connect to provide cleanup on closing of dockwidget
                 self.dockwidget.closingPlugin.connect(self.onClosePlugin)
                 QgsProject.instance().layersAdded.connect(self.reload_combo_box)
                 QgsProject.instance().layersRemoved.connect(self.reload_combo_box)
-
-                self.preview_timer = QTimer(self.dockwidget)
-                self.preview_timer.setSingleShot(True)
-                self.preview_timer.timeout.connect(self.show_preview)
 
             # show the dockwidget
             self.iface.addDockWidget(
@@ -353,4 +329,3 @@ class Magicwand:
             self.enable_magicwand()
 
             self.reload_combo_box()
-            self.init_sliders()

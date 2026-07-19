@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
-
 from qgis.PyQt.QtCore import pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDockWidget,
     QGridLayout,
@@ -11,6 +8,14 @@ from qgis.PyQt.QtWidgets import (
     QSlider,
     QWidget,
 )
+
+DEFAULT_THRESHOLD = 50
+
+
+def configure_threshold_slider(slider: QSlider) -> None:
+    slider.setMinimum(10)
+    slider.setMaximum(90)
+    slider.setSingleStep(10)
 
 
 class MagicwandDockWidget(QDockWidget):
@@ -24,13 +29,13 @@ class MagicwandDockWidget(QDockWidget):
 
         self.enable_button = QPushButton("Enable")
         self.layerComboBox = QComboBox()
-        self.preview_checkbox = QCheckBox("Preview")
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        configure_threshold_slider(self.threshold_slider)
+        self.threshold_slider.setValue(DEFAULT_THRESHOLD)
 
         layout = QGridLayout()
         layout.addWidget(self.enable_button, 0, 0)
-        layout.addWidget(self.layerComboBox, 0, 1, 1, 2)
-        layout.addWidget(self.preview_checkbox, 0, 3)
+        layout.addWidget(self.layerComboBox, 0, 1, 1, 3)
 
         layout.addWidget(QLabel("Color Threshold"), 1, 0)
         layout.addWidget(QLabel("Ambiguous"), 1, 1)
