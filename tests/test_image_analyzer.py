@@ -7,6 +7,7 @@ import pytest
 from plugin_dir.image_analyzer import (
     DELTA_E_PER_THRESHOLD,
     GRADIENT_CAP_RATIO,
+    MAX_ANALYSIS_PIXELS,
     ImageAnalyzer,
     bgr_to_lab,
 )
@@ -90,6 +91,31 @@ class TestToBinary:
         # scaled rectangle is 20x12 at (10, 6)
         assert mask[12, 20]
         assert abs(int(mask.sum()) - 20 * 12) <= 40  # allow edge wobble
+
+    def test_small_canvas_is_analyzed_at_full_resolution(self):
+        image = make_image(60, 40, [(5, 5, 10, 8)])
+        analyzer = ImageAnalyzer(image)
+
+        mask = analyzer.to_binary(QPoint(8, 8))  # resize_multiply omitted
+
+        assert mask.shape == (40, 60)
+
+    def test_huge_canvas_is_downscaled_automatically(self):
+        from qgis.PyQt.QtGui import QPainter
+
+        width, height = 3000, 2000  # 6M pixels > MAX_ANALYSIS_PIXELS
+        image = QImage(width, height, QImage.Format.Format_RGB32)
+        image.fill(WHITE)
+        painter = QPainter(image)
+        painter.fillRect(100, 100, 500, 400, RED)
+        painter.end()
+
+        mask = ImageAnalyzer(image).to_binary(QPoint(300, 300))
+
+        scale = (MAX_ANALYSIS_PIXELS / (width * height)) ** 0.5
+        assert mask.shape == (int(height * scale), int(width * scale))
+        expected_area = (500 * scale) * (400 * scale)
+        assert mask.sum() == pytest.approx(expected_area, rel=0.05)
 
 
 class TestBgrToLab:

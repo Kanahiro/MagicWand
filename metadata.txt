@@ -26,6 +26,7 @@ changelog=2.0.0
     - Polygons are now traced by flood fill from the clicked point (connected component), replacing the whole-canvas scan and the Single Mode checkbox
     - Colors are compared perceptually in CIELAB (delta-E) instead of RGB distance
     - The selection grows over smooth color gradients (region growing) while sharp edges stop it
+    - Remove the Accuracy slider; analysis resolution is now chosen automatically (full resolution, downscaled only on very large canvases)
     - Load toolbar icon from file and drop compiled Qt resources
     - Build the dock widget UI in Python instead of a Designer .ui file
     - Use native: processing algorithms instead of deprecated qgis: ones

@@ -5,6 +5,9 @@ from qgis.PyQt.QtGui import QImage
 
 # slider threshold (10-90) -> CIELAB delta-E tolerance (3-27)
 DELTA_E_PER_THRESHOLD = 0.3
+# analysis resolution is chosen automatically: full canvas resolution,
+# downscaled only when the canvas exceeds this many pixels (e.g. 4K)
+MAX_ANALYSIS_PIXELS = 2_000_000
 # region growing over smooth gradients may reach up to this multiple
 # of the tolerance away from the seed color
 GRADIENT_CAP_RATIO = 2.0
@@ -71,7 +74,10 @@ class ImageAnalyzer:
         )
 
     def to_binary(
-        self, point: QPoint, resize_multiply: float = 0.2, threshold: float = 50
+        self,
+        point: QPoint,
+        threshold: float = 50,
+        resize_multiply: float | None = None,
     ) -> np.ndarray:
         """Binarize the canvas into "the region the user clicked".
 
@@ -82,7 +88,14 @@ class ImageAnalyzer:
         3. grow the region over smooth gradients: neighboring pixels
            join as long as the step between adjacent pixels is small,
            up to GRADIENT_CAP_RATIO * tolerance from the seed color
+
+        `resize_multiply` is chosen automatically when omitted: full
+        resolution, downscaled only for very large canvases.
         """
+        if resize_multiply is None:
+            pixels = self.image.width() * self.image.height()
+            resize_multiply = min(1.0, (MAX_ANALYSIS_PIXELS / pixels) ** 0.5)
+
         tolerance = threshold * DELTA_E_PER_THRESHOLD
         lab = bgr_to_lab(self.to_ndarray(resize_multiply))
 

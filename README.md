@@ -7,10 +7,9 @@ Supports QGIS 3.44 or later, including QGIS 4.x (Qt6).
 ![QGIS/MagicWand](./img/sample.gif)
 
 # Usage
-- Set Accuracy and Color Threshold, and Click mapcanvas where you want to make polygon.
+- Set Color Threshold, and Click mapcanvas where you want to make polygon.
 - A polygon is created from the area connected to the clicked point (flood fill), like the magic wand tool of image editors.
 - Colors are compared perceptually (CIELAB delta-E), and the selection follows smooth gradients (region growing) while sharp color edges stop it.
-- Higher Accuracy needs longer time.
 
 # Development
 

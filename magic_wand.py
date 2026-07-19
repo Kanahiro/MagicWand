@@ -195,10 +195,8 @@ class Magicwand:
         mapSettings = self.canvas.mapSettings()
         image = self.make_image(mapSettings)
         image_analyzer = ImageAnalyzer(image)
-        # get slider value
-        resize_multiply = self.dockwidget.accuracy_slider.value() / 100
         threshold = 100 - self.dockwidget.threshold_slider.value()
-        bin_index = image_analyzer.to_binary(point, resize_multiply, threshold)
+        bin_index = image_analyzer.to_binary(point, threshold)
 
         polygon_maker = PolygonMaker(self.canvas, bin_index)
         project_crs = QgsProject.instance().crs()
@@ -230,11 +228,6 @@ class Magicwand:
         self.canvas.setMapTool(self.map_tool)
 
     def init_sliders(self):
-        self.dockwidget.accuracy_slider.setMinimum(20)
-        self.dockwidget.accuracy_slider.setMaximum(100)
-        self.dockwidget.accuracy_slider.setSingleStep(20)
-        self.dockwidget.accuracy_slider.setValue(60)
-
         self.dockwidget.threshold_slider.setMinimum(10)
         self.dockwidget.threshold_slider.setMaximum(90)
         self.dockwidget.threshold_slider.setSingleStep(10)
