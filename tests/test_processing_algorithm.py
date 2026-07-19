@@ -58,9 +58,24 @@ def seed_layer(points):
     return layer
 
 
+def multipoint_seed_layer(point_groups):
+    """One multipoint feature per group of (x, y) tuples."""
+    layer = QgsVectorLayer("MultiPoint?crs=EPSG:3857", "seeds", "memory")
+    features = []
+    for group in point_groups:
+        feature = QgsFeature()
+        feature.setGeometry(
+            QgsGeometry.fromMultiPointXY([QgsPointXY(x, y) for x, y in group])
+        )
+        features.append(feature)
+    layer.dataProvider().addFeatures(features)
+    layer.updateExtents()
+    return layer
+
+
 @pytest.mark.usefixtures("magicwand_provider", "qgis_new_project")
 class TestPolygonizeBySeeds:
-    def test_one_polygon_per_seed(self, tmp_path):
+    def test_one_selection_per_seed_feature(self, tmp_path):
         from qgis import processing
 
         # two colored rectangles on white; pixel row y=5..25 -> map y=15..35
@@ -94,6 +109,55 @@ class TestPolygonizeBySeeds:
         assert (
             features[2].geometry().contains(QgsGeometry.fromPointXY(QgsPointXY(55, 15)))
         )
+
+    def test_multipoint_seed_produces_one_merged_feature(self, tmp_path):
+        from qgis import processing
+
+        # two disjoint rectangles, both seeded by ONE multipoint feature
+        raster = write_rgb_geotiff(
+            tmp_path / "map.tif",
+            80,
+            40,
+            [(5, 5, 30, 20, RED), (45, 10, 20, 25, BLUE)],
+        )
+        seeds = multipoint_seed_layer([[(20, 25), (55, 15)]])
+
+        result = processing.run(
+            "magicwand:polygonizebyseeds",
+            {
+                "INPUT": raster,
+                "SEEDS": seeds,
+                "TOLERANCE": 3.5,
+                "OUTPUT": "memory:",
+            },
+        )
+
+        output = result["OUTPUT"]
+        features = list(output.getFeatures())
+        assert len(features) == 1  # one selection, one multipolygon feature
+        geometry = features[0].geometry()
+        assert geometry.isMultipart()
+        assert geometry.area() == pytest.approx(30 * 20 + 20 * 25)
+
+    def test_multipoint_seeds_in_the_same_region_do_not_duplicate(self, tmp_path):
+        from qgis import processing
+
+        raster = write_rgb_geotiff(tmp_path / "map.tif", 80, 40, [(5, 5, 30, 20, RED)])
+        seeds = multipoint_seed_layer([[(10, 25), (30, 25)]])  # same rectangle
+
+        result = processing.run(
+            "magicwand:polygonizebyseeds",
+            {
+                "INPUT": raster,
+                "SEEDS": seeds,
+                "TOLERANCE": 3.5,
+                "OUTPUT": "memory:",
+            },
+        )
+
+        features = list(result["OUTPUT"].getFeatures())
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(30 * 20)
 
     def test_seed_outside_raster_is_skipped(self, tmp_path):
         from qgis import processing

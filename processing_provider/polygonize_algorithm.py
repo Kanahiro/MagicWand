@@ -7,6 +7,7 @@ from qgis.core import (
     QgsFeatureSink,
     QgsField,
     QgsFields,
+    QgsGeometry,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingException,
@@ -15,6 +16,7 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
 )
+
 from ..image_analyzer import ImageAnalyzer
 from ..polygon_maker import PixelGrid, PolygonMaker
 
@@ -37,10 +39,11 @@ def _seed_id_field() -> QgsField:
 class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
     """Magic-wand polygonization as a processing algorithm.
 
-    For each seed point, selects the connected region of similar color
-    in an RGB raster (the same binarization the interactive tool applies
-    to the rendered map canvas) and outputs it as polygons. Pair it with
-    the built-in "Convert map to raster" algorithm to reproduce the
+    One seed feature = one magic-wand selection = one output feature:
+    every point of a (multi)point seed feature contributes to the same
+    selection (masks are OR-combined before polygonization), exactly
+    like the interactive tool's Add Point button. Pair it with the
+    built-in "Convert map to raster" algorithm to reproduce the
     interactive behavior in models and batch runs.
     """
 
@@ -57,10 +60,16 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "For each seed point, traces the connected region of similar "
-            "color in an RGB raster (magic wand selection: perceptual "
-            "CIELAB delta-E, flood fill, gradient growing) and outputs "
-            "it as polygons.\n\n"
+            "For each seed feature, traces the connected regions of "
+            "similar color in an RGB raster (magic wand selection: "
+            "perceptual CIELAB delta-E, flood fill, gradient growing) "
+            "and outputs one multipolygon feature tagged with the seed's "
+            "id.\n\n"
+            "One seed feature is one selection: all points of a "
+            "multipoint feature contribute to the same selection, like "
+            "the Add Point button of the interactive tool. Use one "
+            "single-point feature per region to get one polygon per "
+            "point.\n\n"
             "The input must be an 8-bit raster with at least 3 bands "
             "(R, G, B). To run it against styled map layers, render them "
             "first with the built-in 'Convert map to raster' algorithm.\n\n"
@@ -82,7 +91,7 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.SEEDS,
-                "Seed points",
+                "Seed points (one selection per feature)",
                 [QgsProcessing.TypeVectorPoint],
             )
         )
@@ -145,7 +154,7 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
             self.OUTPUT,
             context,
             fields,
-            Qgis.WkbType.Polygon,
+            Qgis.WkbType.MultiPolygon,
             raster.crs(),
         )
 
@@ -162,23 +171,33 @@ class PolygonizeBySeedsAlgorithm(QgsProcessingAlgorithm):
                 break
 
             geometry = seed.geometry()
-            point = (
-                geometry.asMultiPoint()[0]
+            points = (
+                geometry.asMultiPoint()
                 if geometry.isMultipart()
-                else geometry.asPoint()
+                else [geometry.asPoint()]
             )
-            device = to_pixel.transform(point)
-            mask = analyzer.mask_from_bgr(
-                bgr, int(device.x()), int(device.y()), tolerance
-            )
-            if not mask.any():
+
+            # one selection per seed feature: the masks of all its points
+            # are OR-combined before polygonization, like the interactive
+            # tool's Add Point button
+            mask: np.ndarray | None = None
+            for point in points:
+                device = to_pixel.transform(point)
+                point_mask = analyzer.mask_from_bgr(
+                    bgr, int(device.x()), int(device.y()), tolerance
+                )
+                if point_mask.any():
+                    mask = point_mask if mask is None else mask | point_mask
+
+            if mask is None or not mask.any():
                 feedback.pushInfo(f"Seed {seed.id()}: no region found, skipped")
             else:
-                for feature in PolygonMaker(grid, mask).build_polygons(
-                    crs=raster.crs()
-                ):
+                parts = PolygonMaker(grid, mask).build_polygons(crs=raster.crs())
+                if parts:
                     out = QgsFeature(fields)
-                    out.setGeometry(feature.geometry())
+                    out.setGeometry(
+                        QgsGeometry.collectGeometry([part.geometry() for part in parts])
+                    )
                     out["seed_id"] = seed.id()
                     sink.addFeature(out, QgsFeatureSink.Flag.FastInsert)
 
