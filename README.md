@@ -3,7 +3,8 @@ QGIS plugin to make polygon easily and automatically by analyzing MapCanvas.
 
 Supports QGIS 3.44 or later, including QGIS 4.x (Qt6).
 
-https://github.com/user-attachments/assets/c086909c-a9dc-46dc-8622-d834eb156932*Japan GSI Seamlessphoto*
+https://github.com/user-attachments/assets/c086909c-a9dc-46dc-8622-d834eb156932
+*Japan GSI Seamlessphoto*
 
 # Usage
 - Click mapcanvas where you want to make polygon: a tentative polygon is shown semi-transparently, like the magic wand tool of image editors.
