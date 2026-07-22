@@ -1,18 +1,21 @@
 from qgis.gui import QgsMapTool
+from qgis.PyQt.QtCore import Qt
 
 
 class ClickTool(QgsMapTool):
     def __init__(
         self,
         iface,
-        click_callback,
-        move_callback=None,
+        left_click_callback,
+        right_click_callback=None,
+        escape_callback=None,
         deactivated_callback=None,
     ):
         QgsMapTool.__init__(self, iface.mapCanvas())
         self.iface = iface
-        self.click_callback = click_callback
-        self.move_callback = move_callback
+        self.left_click_callback = left_click_callback
+        self.right_click_callback = right_click_callback
+        self.escape_callback = escape_callback
         self.deactivated_callback = deactivated_callback
         self.canvas = iface.mapCanvas()
 
@@ -24,11 +27,18 @@ class ClickTool(QgsMapTool):
         return e.pos()
 
     def canvasPressEvent(self, e):
-        self.click_callback(self._device_point(e))
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.left_click_callback(self._device_point(e))
+        elif e.button() == Qt.MouseButton.RightButton:
+            if self.right_click_callback is not None:
+                self.right_click_callback(self._device_point(e))
 
-    def canvasMoveEvent(self, e):
-        if self.move_callback is not None:
-            self.move_callback(self._device_point(e))
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Escape:
+            if self.escape_callback is not None:
+                self.escape_callback()
+            return
+        QgsMapTool.keyPressEvent(self, e)
 
     def deactivate(self):
         QgsMapTool.deactivate(self)

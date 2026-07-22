@@ -220,27 +220,30 @@ class Magicwand:
     # --------------------------------------------------------------------------
 
     # actions on mapcanvas clicked
-    def click_action(self, point):
-        """Open a click-to-confirm session: a tentative polygon plus a
-        dialog to tune the threshold, while further clicks add seed
-        points before saving. With 1 click mode checked the polygon is
-        saved immediately instead."""
+    def left_click_action(self, point):
+        """A left click confirms the open preview session; without a
+        session it creates and saves the polygon immediately."""
         if self.preview_session is not None:
-            # an open session consumes canvas clicks: each adds a seed
-            self.preview_session.handle_canvas_click(point)
+            self.preview_session.confirm()
             return
 
         image = self.make_image(self.canvas.mapSettings())
+        crs = QgsProject.instance().crs()
+        threshold = 100 - self.dockwidget.threshold_slider.value()
+        bin_index = ImageAnalyzer(image).to_binary(point, threshold)
+        features = PolygonMaker(self.canvas, bin_index).build_polygons(crs)
+        if features:
+            self.save_features(features, crs)
 
-        if self.dockwidget.one_click_checkbox.isChecked():
-            crs = QgsProject.instance().crs()
-            threshold = 100 - self.dockwidget.threshold_slider.value()
-            bin_index = ImageAnalyzer(image).to_binary(point, threshold)
-            features = PolygonMaker(self.canvas, bin_index).build_polygons(crs)
-            if features:
-                self.save_features(features, crs)
+    def right_click_action(self, point):
+        """A right click starts a preview session (tentative polygon on
+        the canvas, threshold slider live); every further right click
+        adds a seed point to the same selection."""
+        if self.preview_session is not None:
+            self.preview_session.add_seed(point)
             return
 
+        image = self.make_image(self.canvas.mapSettings())
         self.preview_session = PreviewSession(self, image, point)
 
     def save_features(self, features, crs):
@@ -301,7 +304,9 @@ class Magicwand:
             self.previous_map_tool = current_tool
         self.map_tool = ClickTool(
             self.iface,
-            click_callback=self.click_action,
+            left_click_callback=self.left_click_action,
+            right_click_callback=self.right_click_action,
+            escape_callback=self.cancel_preview_session,
             deactivated_callback=self.cancel_preview_session,
         )
         self.canvas.setMapTool(self.map_tool)
