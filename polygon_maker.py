@@ -22,6 +22,19 @@ POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 # on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
 
+# boundary smoothing (Chaikin corner cutting via QgsGeometry.smooth).
+# The smoothing offset is a fraction of each segment's length, so the
+# ring is densified to at most DENSIFY_INTERVAL_CELLS-long segments
+# first: this caps the corner rounding radius at roughly
+# DENSIFY_INTERVAL_CELLS * SMOOTH_OFFSET cells — about the scale of the
+# pixel jaggedness — instead of letting long straight edges produce
+# arbitrarily large rounded corners. Two iterations turn each chamfer
+# into a reasonably smooth arc; more iterations only add vertices for
+# little visual gain.
+DENSIFY_INTERVAL_CELLS = 3.0
+SMOOTH_ITERATIONS = 2
+SMOOTH_OFFSET = 0.25
+
 
 class PixelGrid:
     """Pixel<->map transform context for PolygonMaker.
@@ -135,7 +148,7 @@ class PolygonMaker:
                 "OUTPUT": "memory:",
             },
         )["OUTPUT"]
-        return list(cleaned_layer.getFeatures())
+        return self.smooth_features(list(cleaned_layer.getFeatures()), cell_size)
 
     def make_polygons(
         self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
@@ -217,6 +230,21 @@ class PolygonMaker:
         features_layer.dataProvider().addFeatures(features)
         features_layer.updateExtents()
         return features_layer
+
+    def smooth_features(
+        self, features: list[QgsFeature], cell_size: float
+    ) -> list[QgsFeature]:
+        """Round off the residual pixel jaggedness of the boundaries.
+
+        Works directly on the geometries (densify + Chaikin smoothing)
+        instead of going through processing algorithms, to keep the
+        per-click cost low."""
+        for feature in features:
+            geometry = feature.geometry().densifyByDistance(
+                cell_size * DENSIFY_INTERVAL_CELLS
+            )
+            feature.setGeometry(geometry.smooth(SMOOTH_ITERATIONS, SMOOTH_OFFSET))
+        return features
 
     def noise_reduction(self, features, noise_multiply: float) -> list[QgsFeature]:
         """Drop features smaller than `noise_multiply` mask cells."""

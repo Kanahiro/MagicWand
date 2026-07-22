@@ -99,7 +99,8 @@ class TestBuildPolygons:
         features = maker.build_polygons(crs=CRS)
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(5400)
+        # 54 cells x (10x10) map units, minus the slightly rounded corners
+        assert features[0].geometry().area() == pytest.approx(5400, rel=0.05)
         # preview computation must not add layers to the project
         assert len(QgsProject.instance().mapLayers()) == 0
 
@@ -110,12 +111,33 @@ class TestBuildPolygons:
         assert maker.build_polygons(crs=CRS) == []
 
 
+def max_turn_degrees(geometry) -> float:
+    """Largest direction change (degrees) at any vertex of the
+    geometry's exterior ring."""
+    import math
+
+    ring = geometry.asPolygon()[0][:-1]  # drop the closing point
+    worst = 0.0
+    for i in range(len(ring)):
+        a = ring[i - 1]
+        b = ring[i]
+        c = ring[(i + 1) % len(ring)]
+        heading_in = math.atan2(b.y() - a.y(), b.x() - a.x())
+        heading_out = math.atan2(c.y() - b.y(), c.x() - b.x())
+        turn = abs(math.degrees(heading_out - heading_in)) % 360
+        worst = max(worst, min(turn, 360 - turn))
+    return worst
+
+
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
-class TestSimplification:
-    def test_staircase_boundary_is_thinned(self, canvas, polygon_maker_module):
+class TestSimplificationAndSmoothing:
+    def test_staircase_boundary_is_thinned_and_smoothed(
+        self, canvas, polygon_maker_module
+    ):
         # a pixel staircase (lower-left triangle of cells): the raw
-        # dissolved boundary has ~2 vertices per stair step; thinning
-        # should collapse it towards the diagonal without losing area
+        # dissolved boundary has ~2 vertices (a 90-degree zigzag) per
+        # stair step; thinning should collapse it towards the diagonal
+        # without losing area, and smoothing rounds what remains
         bin_index = np.zeros((10, 20), dtype=bool)
         for y in range(10):
             bin_index[y, : y + 1] = True  # 1+2+...+10 = 55 cells
@@ -126,9 +148,11 @@ class TestSimplification:
         assert len(features) == 1
         geometry = features[0].geometry()
         assert geometry.area() == pytest.approx(5500, rel=0.1)
-        # raw staircase ring has ~23 vertices; the thinned ring must be
-        # substantially lighter
-        assert geometry.constGet().nCoordinates() <= 12
+        # no stair-step (90-degree) corners survive on the boundary
+        assert max_turn_degrees(geometry) < 60
+        # smoothing must stay cheap: the ring stays far lighter than
+        # Chaikin on the raw ~23-vertex staircase would produce
+        assert geometry.constGet().nCoordinates() <= 60
 
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")
@@ -198,9 +222,9 @@ class TestMakePolygons:
         assert layer.name() == "magic_wand"
         features = list(layer.getFeatures())
         assert len(features) == 1
-        # 54 cells x (10x10) map units; the rectangle survives
-        # simplification exactly (area-based thinning keeps corners)
-        assert features[0].geometry().area() == pytest.approx(5400)
+        # 54 cells x (10x10) map units; area-based thinning keeps the
+        # rectangle exact, smoothing then rounds the corners slightly
+        assert features[0].geometry().area() == pytest.approx(5400, rel=0.05)
 
     def test_appends_to_existing_layer(self, canvas, polygon_maker_module):
         existing = QgsVectorLayer(f"Polygon?crs={CRS.authid()}", "existing", "memory")
