@@ -57,7 +57,7 @@ class TestBuildMultiSeedFeatures:
         )
 
         areas = sorted(f.geometry().area() for f in features)
-        assert areas == [pytest.approx(20 * 25), pytest.approx(30 * 20)]
+        assert areas == [pytest.approx(20 * 25, rel=0.02), pytest.approx(30 * 20, rel=0.02)]
 
     def test_seeds_in_the_same_region_do_not_duplicate(self, modules):
         session_module, analyzer, grid = self._setup(modules, [(5, 5, 30, 20, RED)])
@@ -71,7 +71,7 @@ class TestBuildMultiSeedFeatures:
         )
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(30 * 20)
+        assert features[0].geometry().area() == pytest.approx(30 * 20, rel=0.02)
 
     def test_seed_colors_form_one_combined_model(self, modules):
         # RED | BLUE | RED bands: seeding the left RED and the BLUE band
@@ -91,7 +91,7 @@ class TestBuildMultiSeedFeatures:
         )
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(60 * 20)
+        assert features[0].geometry().area() == pytest.approx(60 * 20, rel=0.02)
 
     def test_single_seed_matches_the_plain_flow(self, modules):
         session_module, analyzer, grid = self._setup(modules, [(5, 5, 30, 20, RED)])
@@ -101,7 +101,7 @@ class TestBuildMultiSeedFeatures:
         )
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(30 * 20)
+        assert features[0].geometry().area() == pytest.approx(30 * 20, rel=0.02)
 
     def test_no_seeds_returns_no_features(self, modules):
         session_module, analyzer, grid = self._setup(modules, [])

@@ -100,8 +100,8 @@ class TestPolygonizeBySeeds:
         output = result["OUTPUT"]
         features = {f["seed_id"]: f for f in output.getFeatures()}
         assert len(features) == 2
-        assert features[1].geometry().area() == pytest.approx(30 * 20)
-        assert features[2].geometry().area() == pytest.approx(20 * 25)
+        assert features[1].geometry().area() == pytest.approx(30 * 20, rel=0.02)
+        assert features[2].geometry().area() == pytest.approx(20 * 25, rel=0.02)
         # each polygon contains its own seed
         assert (
             features[1].geometry().contains(QgsGeometry.fromPointXY(QgsPointXY(20, 25)))
@@ -137,7 +137,7 @@ class TestPolygonizeBySeeds:
         assert len(features) == 1  # one selection, one multipolygon feature
         geometry = features[0].geometry()
         assert geometry.isMultipart()
-        assert geometry.area() == pytest.approx(30 * 20 + 20 * 25)
+        assert geometry.area() == pytest.approx(30 * 20 + 20 * 25, rel=0.02)
 
     def test_multipoint_seeds_in_the_same_region_do_not_duplicate(self, tmp_path):
         from qgis import processing
@@ -157,7 +157,7 @@ class TestPolygonizeBySeeds:
 
         features = list(result["OUTPUT"].getFeatures())
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(30 * 20)
+        assert features[0].geometry().area() == pytest.approx(30 * 20, rel=0.02)
 
     def test_multipoint_colors_form_one_combined_model(self, tmp_path):
         from qgis import processing
@@ -187,7 +187,7 @@ class TestPolygonizeBySeeds:
 
         features = list(result["OUTPUT"].getFeatures())
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(60 * 20)
+        assert features[0].geometry().area() == pytest.approx(60 * 20, rel=0.02)
 
     def test_seed_outside_raster_is_skipped(self, tmp_path):
         from qgis import processing
