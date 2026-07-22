@@ -29,12 +29,17 @@ class FakeKeyEvent:
 
 class TestClickTool:
     def _tool(self, qgis_iface):
-        calls = {"left": [], "right": [], "escape": 0}
+        calls = {"left": [], "right": [], "escape": 0, "backspace": 0}
+
+        def count(key):
+            return lambda: calls.__setitem__(key, calls[key] + 1)
+
         tool = ClickTool(
             qgis_iface,
             left_click_callback=calls["left"].append,
             right_click_callback=calls["right"].append,
-            escape_callback=lambda: calls.__setitem__("escape", calls["escape"] + 1),
+            escape_callback=count("escape"),
+            backspace_callback=count("backspace"),
         )
         return tool, calls
 
@@ -54,9 +59,17 @@ class TestClickTool:
         tool, calls = self._tool(qgis_iface)
         tool.keyPressEvent(FakeKeyEvent(Qt.Key.Key_Escape))
         assert calls["escape"] == 1
+        assert calls["backspace"] == 0
+
+    def test_backspace_dispatch(self, qgis_iface):
+        tool, calls = self._tool(qgis_iface)
+        tool.keyPressEvent(FakeKeyEvent(Qt.Key.Key_Backspace))
+        assert calls["backspace"] == 1
+        assert calls["escape"] == 0
 
     def test_optional_callbacks_default_to_none(self, qgis_iface):
         tool = ClickTool(qgis_iface, left_click_callback=lambda p: None)
-        # neither of these must raise without the optional callbacks
+        # none of these must raise without the optional callbacks
         tool.canvasPressEvent(FakeMouseEvent(Qt.MouseButton.RightButton))
         tool.keyPressEvent(FakeKeyEvent(Qt.Key.Key_Escape))
+        tool.keyPressEvent(FakeKeyEvent(Qt.Key.Key_Backspace))

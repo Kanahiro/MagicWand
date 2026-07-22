@@ -61,7 +61,8 @@ class PreviewSession:
     corrupt them). Every further right click adds a seed point to the
     selection, moving the dock widget's Color Threshold slider updates
     the tentative polygon live, a left click confirms and saves it, and
-    Escape (or deactivating the tool) discards it.
+    Escape (or deactivating the tool) discards it. Backspace undoes the
+    latest seed point; undoing the only one ends the session.
     """
 
     def __init__(self, plugin, image, first_widget_point: QPoint):
@@ -109,6 +110,19 @@ class PreviewSession:
         marker.setPenWidth(2)
         self.markers.append(marker)
 
+        self.recompute()
+
+    def remove_last_seed(self) -> None:
+        """Undo the latest right click; removing the only seed ends the
+        session."""
+        if not self.seeds:
+            return
+        self.seeds.pop()
+        self.canvas.scene().removeItem(self.markers.pop())
+
+        if not self.seeds:
+            self.cancel()
+            return
         self.recompute()
 
     # ---------------------------------------------------------- recompute

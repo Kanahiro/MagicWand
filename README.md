@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/c086909c-a9dc-46dc-8622-d834eb156932
 # Usage
 - Left-click mapcanvas where you want to make polygon: the polygon is created and saved immediately, like the magic wand tool of image editors.
 - Or right-click to preview first: a tentative polygon is shown semi-transparently. Keep right-clicking to add seed points into the same selection — useful when one visual region spans colors beyond the threshold (e.g. a shaded part), instead of loosening the threshold. All seed colors are combined into one color model.
-- While previewing, adjust the Color Threshold slider to update the tentative polygon live. Left-click to confirm and save it; press Escape to discard it.
+- While previewing, adjust the Color Threshold slider to update the tentative polygon live. Left-click to confirm and save it; press Backspace to undo the latest seed point, or Escape to discard the whole preview.
 - Polygons are added as layer edits (one undo step per click): press Ctrl+Z to undo a creation, and save the layer edits to make them permanent.
 - The polygon is traced from the area connected to the clicked point (flood fill). Colors are compared perceptually (CIELAB delta-E), and the selection follows smooth gradients (region growing) while sharp color edges stop it.
 

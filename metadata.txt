@@ -24,6 +24,7 @@ hasProcessingProvider=yes
 changelog=2.1.0
     - Replace the confirmation dialog with an in-canvas preview flow: right-click to show the tentative polygon (each further right click adds a seed point), left-click to confirm and save, Escape to discard
     - The Color Threshold slider in the dock widget updates the tentative polygon live while previewing
+    - Backspace while previewing undoes the latest seed point (undoing the only one discards the preview)
     - A left click without an open preview creates and saves the polygon immediately; the 1 click mode checkbox is removed as this is now the default left-click behavior
     2.0.0
     - Support QGIS 4.x / Qt6 (scoped enums, sizeInBytes, PyQt6-safe code)

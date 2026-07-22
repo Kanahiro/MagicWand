@@ -9,6 +9,7 @@ class ClickTool(QgsMapTool):
         left_click_callback,
         right_click_callback=None,
         escape_callback=None,
+        backspace_callback=None,
         deactivated_callback=None,
     ):
         QgsMapTool.__init__(self, iface.mapCanvas())
@@ -16,6 +17,7 @@ class ClickTool(QgsMapTool):
         self.left_click_callback = left_click_callback
         self.right_click_callback = right_click_callback
         self.escape_callback = escape_callback
+        self.backspace_callback = backspace_callback
         self.deactivated_callback = deactivated_callback
         self.canvas = iface.mapCanvas()
 
@@ -37,6 +39,10 @@ class ClickTool(QgsMapTool):
         if e.key() == Qt.Key.Key_Escape:
             if self.escape_callback is not None:
                 self.escape_callback()
+            return
+        if e.key() == Qt.Key.Key_Backspace:
+            if self.backspace_callback is not None:
+                self.backspace_callback()
             return
         QgsMapTool.keyPressEvent(self, e)
 

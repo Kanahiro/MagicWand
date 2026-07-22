@@ -246,6 +246,10 @@ class Magicwand:
         image = self.make_image(self.canvas.mapSettings())
         self.preview_session = PreviewSession(self, image, point)
 
+    def backspace_action(self):
+        if self.preview_session is not None:
+            self.preview_session.remove_last_seed()
+
     def save_features(self, features, crs):
         layer_id = self.dockwidget.layerComboBox.currentData()
         output_layer = add_features_to_layer(features, crs, layer_id)
@@ -307,6 +311,7 @@ class Magicwand:
             left_click_callback=self.left_click_action,
             right_click_callback=self.right_click_action,
             escape_callback=self.cancel_preview_session,
+            backspace_callback=self.backspace_action,
             deactivated_callback=self.cancel_preview_session,
         )
         self.canvas.setMapTool(self.map_tool)
