@@ -1,6 +1,8 @@
+import heapq
 import math
 
 import numpy as np
+from osgeo import gdal, ogr
 
 from qgis.core import (
     Qgis,
@@ -8,21 +10,24 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsMapToPixel,
+    QgsPointXY,
     QgsProject,
     QgsRectangle,
     QgsVectorLayer,
 )
-from qgis import processing
 
 POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 
 # vertex thinning tolerance, in mask-cell sizes. Simplification is
 # area-based (Visvalingam-Whyatt): a pixel staircase is a run of tiny
-# triangles of half a cell's area, so a threshold of one cell removes
-# them reliably while real corners (much larger triangles) survive —
-# unlike distance-based Douglas-Peucker, which clips corners depending
-# on where the ring happens to start
+# triangles of half a cell's area, so an effective area threshold of one
+# square cell removes them reliably while real corners (much larger
+# triangles) survive — unlike distance-based Douglas-Peucker, which
+# clips corners depending on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
+
+# features and holes smaller than this many mask cells are noise
+NOISE_CELLS = 40
 
 
 class PixelGrid:
@@ -97,56 +102,129 @@ def add_features_to_layer(
     return output
 
 
+def polygonize_mask(mask: np.ndarray) -> list[list[np.ndarray]]:
+    """Trace the boundaries of a binary mask (GDAL polygonize).
+
+    Returns one entry per 4-connected region of True cells: a list of
+    rings, exterior first, each a closed (N, 2) float array of ring
+    vertices in cell coordinates (x right, y down, cell corners on
+    integers).
+    """
+    height, width = mask.shape
+    raster = gdal.GetDriverByName("MEM").Create("", width, height, 1, gdal.GDT_Byte)
+    # identity geotransform: polygon coordinates are cell corners
+    raster.SetGeoTransform((0, 1, 0, 0, 0, 1))
+    band = raster.GetRasterBand(1)
+    band.WriteArray(mask.astype(np.uint8))
+
+    vector = ogr.GetDriverByName("Memory").CreateDataSource("")
+    layer = vector.CreateLayer("mask", None, ogr.wkbPolygon)
+    layer.CreateField(ogr.FieldDefn("value", ogr.OFTInteger))
+    # the band doubles as its own mask, so False cells produce no
+    # feature at all; 4-connectivity (the default) matches the
+    # 4-connected flood fill that produced the mask
+    gdal.Polygonize(band, band, layer, 0)
+
+    polygons = []
+    for feature in layer:
+        geometry = feature.GetGeometryRef()
+        rings = [
+            np.array(geometry.GetGeometryRef(i).GetPoints(), dtype=np.float64)[:, :2]
+            for i in range(geometry.GetGeometryCount())
+        ]
+        polygons.append(rings)
+    return polygons
+
+
+def ring_area(ring: np.ndarray) -> float:
+    """Unsigned shoelace area of a closed (N, 2) ring."""
+    x, y = ring[:, 0], ring[:, 1]
+    return abs(float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]))) / 2
+
+
+def simplify_ring(ring: np.ndarray, min_triangle_area: float) -> np.ndarray:
+    """Thin a closed ring with Visvalingam-Whyatt simplification.
+
+    Repeatedly removes the vertex spanning the smallest triangle with
+    its neighbors while that area is below `min_triangle_area`, never
+    reducing the ring below a triangle.
+    """
+    points = ring[:-1]  # drop the closing vertex, treat as circular
+    n = len(points)
+    if n <= 3:
+        return ring
+
+    prev = np.roll(np.arange(n), 1)
+    next_ = np.roll(np.arange(n), -1)
+    alive = np.ones(n, dtype=bool)
+    alive_count = n
+
+    def triangle_area(i: int) -> float:
+        a, b, c = points[prev[i]], points[i], points[next_[i]]
+        return abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2
+
+    heap = [(triangle_area(i), i) for i in range(n)]
+    heapq.heapify(heap)
+
+    while heap and alive_count > 3:
+        area, i = heapq.heappop(heap)
+        if not alive[i]:
+            continue
+        if area != triangle_area(i):
+            # stale entry: neighbors changed since it was pushed
+            heapq.heappush(heap, (triangle_area(i), i))
+            continue
+        if area >= min_triangle_area:
+            break
+        alive[i] = False
+        alive_count -= 1
+        next_[prev[i]] = next_[i]
+        prev[next_[i]] = prev[i]
+        for j in (prev[i], next_[i]):
+            heapq.heappush(heap, (triangle_area(j), j))
+
+    kept = points[alive]
+    return np.vstack([kept, kept[:1]])
+
+
 class PolygonMaker:
     def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
         self.map_canvas = canvas
         self.size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
-        self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
-        self.noise_multiply = 40
 
     def build_polygons(self, crs: QgsCoordinateReferenceSystem) -> list[QgsFeature]:
-        """Run the full pipeline and return the resulting features
-        without touching the project."""
-        rects = self.make_rects()
-        if not rects:
-            return []
-        rects_layer = self.make_layer_by(rects, crs)
+        """Polygonize the mask and return the resulting features without
+        touching the project.
 
-        dissolved_layer = processing.run(
-            "native:dissolve", {"INPUT": rects_layer, "OUTPUT": "memory:"}
-        )["OUTPUT"]
-        single_part_layer = processing.run(
-            "native:multiparttosingleparts",
-            {"INPUT": dissolved_layer, "OUTPUT": "memory:"},
-        )["OUTPUT"]
-        single_features = single_part_layer.getFeatures()
-
-        denoised_features = self.noise_reduction(single_features, self.noise_multiply)
-        if not denoised_features:
-            return []
-        denoised_layer = self.make_layer_by(denoised_features, crs)
-
-        cell_size = self.minimum_area**0.5
-        simplified_layer = processing.run(
-            "native:simplifygeometries",
-            {
-                "INPUT": denoised_layer,
-                "METHOD": 2,  # area-based (Visvalingam-Whyatt)
-                "TOLERANCE": cell_size * SIMPLIFY_TOLERANCE_CELLS,
-                "OUTPUT": "memory:",
-            },
-        )["OUTPUT"]
-        cleaned_layer = processing.run(
-            "native:deleteholes",
-            {
-                "INPUT": simplified_layer,
+        The whole pipeline — boundary tracing, noise and hole removal,
+        vertex thinning — runs in mask-cell coordinates; only the final
+        vertices are transformed to map coordinates, so any pixel->map
+        transform (including a rotated canvas) applies uniformly.
+        """
+        features = []
+        for rings in polygonize_mask(self.bin_index):
+            if ring_area(rings[0]) < NOISE_CELLS:
+                continue  # speck
+            kept_rings = [
+                simplify_ring(ring, SIMPLIFY_TOLERANCE_CELLS**2)
+                for ring in rings
                 # holes and specks share the same area threshold
-                "MIN_AREA": self.minimum_area * self.noise_multiply,
-                "OUTPUT": "memory:",
-            },
-        )["OUTPUT"]
-        return list(cleaned_layer.getFeatures())
+                if ring is rings[0] or ring_area(ring) >= NOISE_CELLS
+            ]
+            feature = QgsFeature()
+            feature.setGeometry(
+                QgsGeometry.fromPolygonXY(
+                    [self.ring_to_map(ring) for ring in kept_rings]
+                )
+            )
+            features.append(feature)
+        return features
+
+    def ring_to_map(self, ring: np.ndarray) -> list[QgsPointXY]:
+        """Transform a ring from cell coordinates to map coordinates."""
+        to_map = self.map_canvas.getCoordinateTransform().toMapCoordinatesF
+        return [to_map(x * self.size_multiply, y * self.size_multiply) for x, y in ring]
 
     def make_polygons(
         self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
@@ -155,89 +233,3 @@ class PolygonMaker:
         if not cleaned_features:
             return
         add_features_to_layer(cleaned_features, crs, layer_id)
-
-    # make rectangle geometry by pointXY on Pixels
-    def make_rect(
-        self, x: int, y: int, size_multiply: float, count: int = 0
-    ) -> QgsGeometry:
-        # transform all four pixel corners: with a rotated canvas the
-        # cell is a rotated quad in map coordinates, so an axis-aligned
-        # rectangle between two transformed corners would be distorted
-        to_map = self.map_canvas.getCoordinateTransform().toMapCoordinatesF
-        left = x * size_multiply
-        top = y * size_multiply
-        right = (x + count + 1) * size_multiply
-        bottom = (y + 1) * size_multiply
-
-        return QgsGeometry.fromPolygonXY(
-            [
-                [
-                    to_map(left, top),
-                    to_map(right, top),
-                    to_map(right, bottom),
-                    to_map(left, bottom),
-                    to_map(left, top),
-                ]
-            ]
-        )
-
-    def make_rects(self) -> list[QgsFeature]:
-        # make 2d array including only TRUE pixel index
-        # true_points[0]:y axis indexes
-        # true_points[1]:x axis indexes
-        true_points = np.where(self.bin_index)
-
-        # rectangle making sequence
-        geos = []
-        # when neighbor pixel also true, incliment this count
-        connected_count = 0
-        for i in range(len(true_points[0])):
-            # skip loops same number to the count
-            if connected_count > 0:
-                connected_count -= 1
-                continue
-
-            x = true_points[1][i]
-            y = true_points[0][i]
-
-            # when the final loop
-            if i >= len(true_points[0]) - 1:
-                geos.append(self.make_rect(x, y, self.size_multiply))
-                break
-
-            # calculate connected_count
-            while (
-                true_points[1][i + connected_count + 1]
-                - true_points[1][i + connected_count]
-                == 1
-            ):
-                connected_count += 1
-                if i + connected_count + 1 >= len(true_points[0]) - 1:
-                    break
-
-            geos.append(self.make_rect(x, y, self.size_multiply, connected_count))
-
-        rects = []
-        for geo in geos:
-            rect = QgsFeature()
-            rect.setGeometry(geo)
-            rects.append(rect)
-        return rects
-
-    def make_layer_by(
-        self, features: list[QgsFeature], crs: QgsCoordinateReferenceSystem
-    ) -> QgsVectorLayer:
-        features_layer = QgsVectorLayer(
-            f"Polygon?crs={crs.authid()}", "magic_wand", "memory"
-        )
-        features_layer.dataProvider().addFeatures(features)
-        features_layer.updateExtents()
-        return features_layer
-
-    def noise_reduction(self, features, noise_multiply: float) -> list[QgsFeature]:
-        """Drop features smaller than `noise_multiply` mask cells."""
-        return [
-            feature
-            for feature in features
-            if feature.geometry().area() >= self.minimum_area * noise_multiply
-        ]

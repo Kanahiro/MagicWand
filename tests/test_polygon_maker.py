@@ -57,56 +57,101 @@ def polygon_maker_module(qgis_plugin_path):
     return polygon_maker
 
 
-class TestMakeRect:
-    def test_single_cell_rect(self, canvas, polygon_maker_module):
-        bin_index = np.ones((10, 20), dtype=bool)  # -> 10 px per cell
-        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+class TestPolygonizeMask:
+    def test_single_region(self, polygon_maker_module):
+        mask = np.zeros((10, 20), dtype=bool)
+        mask[2:8, 3:12] = True
 
-        assert maker.size_multiply == pytest.approx(10)
-        geo = maker.make_rect(0, 0, maker.size_multiply)
-        assert geo.area() == pytest.approx(100)  # 10x10 map units
+        polygons = polygon_maker_module.polygonize_mask(mask)
 
-    def test_run_of_cells_widens_rect(self, canvas, polygon_maker_module):
-        bin_index = np.ones((10, 20), dtype=bool)
-        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        assert len(polygons) == 1
+        rings = polygons[0]
+        assert len(rings) == 1  # no holes
+        assert polygon_maker_module.ring_area(rings[0]) == pytest.approx(54)
+        # ring vertices are cell corners of the mask block
+        assert rings[0][:, 0].min() == 3
+        assert rings[0][:, 0].max() == 12
+        assert rings[0][:, 1].min() == 2
+        assert rings[0][:, 1].max() == 8
 
-        geo = maker.make_rect(0, 0, maker.size_multiply, count=2)
-        assert geo.area() == pytest.approx(300)  # 3 cells wide
+    def test_hole_is_traced_as_interior_ring(self, polygon_maker_module):
+        mask = np.zeros((20, 20), dtype=bool)
+        mask[1:19, 1:19] = True
+        mask[5:15, 5:15] = False  # 10x10 hole
+
+        polygons = polygon_maker_module.polygonize_mask(mask)
+
+        assert len(polygons) == 1
+        rings = polygons[0]
+        assert len(rings) == 2
+        assert polygon_maker_module.ring_area(rings[0]) == pytest.approx(18 * 18)
+        assert polygon_maker_module.ring_area(rings[1]) == pytest.approx(100)
+
+    def test_disjoint_regions_are_separate_polygons(self, polygon_maker_module):
+        mask = np.zeros((10, 20), dtype=bool)
+        mask[1:4, 1:4] = True
+        mask[6:9, 10:15] = True
+
+        polygons = polygon_maker_module.polygonize_mask(mask)
+
+        assert len(polygons) == 2
+        areas = sorted(polygon_maker_module.ring_area(p[0]) for p in polygons)
+        assert areas == pytest.approx([9, 15])
+
+    def test_diagonal_neighbors_are_not_connected(self, polygon_maker_module):
+        # the mask comes from a 4-connected flood fill; tracing must not
+        # merge cells that only touch at a corner
+        mask = np.zeros((4, 4), dtype=bool)
+        mask[1, 1] = True
+        mask[2, 2] = True
+
+        polygons = polygon_maker_module.polygonize_mask(mask)
+
+        assert len(polygons) == 2
+
+    def test_empty_mask(self, polygon_maker_module):
+        mask = np.zeros((10, 20), dtype=bool)
+
+        assert polygon_maker_module.polygonize_mask(mask) == []
+
+
+class TestSimplifyRing:
+    def test_staircase_collapses_to_diagonal(self, polygon_maker_module):
+        # right triangle drawn as a pixel staircase: the stair vertices
+        # span half-cell triangles, well below the one-cell threshold
+        mask = np.zeros((10, 20), dtype=bool)
+        for y in range(10):
+            mask[y, : y + 1] = True
+        (rings,) = polygon_maker_module.polygonize_mask(mask)
+        raw = rings[0]
+
+        thinned = polygon_maker_module.simplify_ring(raw, 1.0)
+
+        assert len(thinned) < len(raw) / 2
+        # area drifts by at most the removed half-cell triangles
+        assert polygon_maker_module.ring_area(thinned) == pytest.approx(55, rel=0.1)
+
+    def test_rectangle_corners_survive(self, polygon_maker_module):
+        ring = np.array([[0, 0], [10, 0], [10, 6], [0, 6], [0, 0]], dtype=np.float64)
+
+        thinned = polygon_maker_module.simplify_ring(ring, 1.0)
+
+        assert polygon_maker_module.ring_area(thinned) == pytest.approx(60)
+        assert len(thinned) == 5
+
+    def test_never_collapses_below_a_triangle(self, polygon_maker_module):
+        ring = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], dtype=np.float64)
+
+        thinned = polygon_maker_module.simplify_ring(ring, 1e9)
+
+        assert len(thinned) >= 4  # triangle + closing vertex
 
 
 class TestRotatedCanvas:
-    def test_map_units_per_pixel_ignores_envelope_growth(
-        self, rotated_canvas, polygon_maker_module
-    ):
+    def test_map_units_per_pixel_ignores_envelope_growth(self, rotated_canvas):
         # the rotated view's envelope is wider than 200 units, but the
         # scale is still 1 unit/px
         assert rotated_canvas.mapUnitsPerPixel() == pytest.approx(1.0)
-
-    def test_cell_area_is_preserved(self, rotated_canvas, polygon_maker_module):
-        bin_index = np.ones((10, 20), dtype=bool)
-        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
-
-        geo = maker.make_rect(0, 0, maker.size_multiply)
-        assert geo.area() == pytest.approx(100)  # 10x10 map units
-
-        geo = maker.make_rect(0, 0, maker.size_multiply, count=2)
-        assert geo.area() == pytest.approx(300)
-
-    def test_cell_is_rotated_not_axis_aligned(
-        self, rotated_canvas, polygon_maker_module
-    ):
-        bin_index = np.ones((10, 20), dtype=bool)
-        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
-
-        geo = maker.make_rect(0, 0, maker.size_multiply)
-        bounds = geo.boundingBox()
-        # a 10x10 cell rotated by 30 degrees has a wider envelope
-        expected = 10 * (
-            abs(math.cos(math.radians(ROTATION)))
-            + abs(math.sin(math.radians(ROTATION)))
-        )
-        assert bounds.width() == pytest.approx(expected)
-        assert bounds.height() == pytest.approx(expected)
 
     def test_round_trip_matches_pixel(self, rotated_canvas):
         transform = rotated_canvas.getCoordinateTransform()
@@ -115,50 +160,28 @@ class TestRotatedCanvas:
         assert device.x() == pytest.approx(30)
         assert device.y() == pytest.approx(70)
 
-
-class TestMakeRects:
-    def test_horizontal_runs_are_merged(self, canvas, polygon_maker_module):
+    def test_output_is_rotated_not_axis_aligned(
+        self, rotated_canvas, polygon_maker_module
+    ):
         bin_index = np.zeros((10, 20), dtype=bool)
-        bin_index[0, 0:3] = True  # one run of 3 cells
-        bin_index[2, 5] = True  # isolated cell
-        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        bin_index[2:8, 3:12] = True  # 90x60 map units
+        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
 
-        rects = maker.make_rects()
+        features = maker.build_polygons(crs=CRS)
 
-        assert len(rects) == 2
-        assert rects[0].geometry().area() == pytest.approx(300)
-        assert rects[1].geometry().area() == pytest.approx(100)
-
-    def test_empty_mask_produces_no_rects(self, canvas, polygon_maker_module):
-        bin_index = np.zeros((10, 20), dtype=bool)
-        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
-
-        assert maker.make_rects() == []
-
-
-class TestNoiseReduction:
-    def test_small_features_are_dropped(self, canvas, polygon_maker_module):
-        bin_index = np.ones((10, 20), dtype=bool)
-        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
-
-        from qgis.core import QgsFeature
-
-        small_feature = QgsFeature()
-        small_feature.setGeometry(maker.make_rect(0, 0, maker.size_multiply))
-        big_feature = QgsFeature()
-        big_feature.setGeometry(maker.make_rect(0, 0, maker.size_multiply, count=50))
-
-        output = maker.noise_reduction(
-            [small_feature, big_feature], maker.noise_multiply
+        assert len(features) == 1
+        bounds = features[0].geometry().boundingBox()
+        angle = math.radians(ROTATION)
+        # the envelope of the rotated 90x60 block is wider than the block
+        assert bounds.width() == pytest.approx(
+            90 * math.cos(angle) + 60 * math.sin(angle)
         )
-
-        assert len(output) == 1
-        assert output[0].geometry().area() == pytest.approx(
-            big_feature.geometry().area()
+        assert bounds.height() == pytest.approx(
+            90 * math.sin(angle) + 60 * math.cos(angle)
         )
 
 
-@pytest.mark.usefixtures("native_processing", "qgis_new_project")
+@pytest.mark.usefixtures("qgis_new_project")
 class TestBuildPolygons:
     def test_returns_features_without_touching_project(
         self, canvas, polygon_maker_module
@@ -190,8 +213,35 @@ class TestBuildPolygons:
         assert len(features) == 1
         assert features[0].geometry().area() == pytest.approx(5400)
 
+    def test_small_specks_are_dropped(self, canvas, polygon_maker_module):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True  # 54 cells, above the noise threshold
+        bin_index[0, 15:18] = True  # 3-cell speck
 
-@pytest.mark.usefixtures("native_processing", "qgis_new_project")
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        features = maker.build_polygons(crs=CRS)
+
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(5400)
+
+    def test_small_holes_are_filled_large_holes_survive(
+        self, canvas, polygon_maker_module
+    ):
+        bin_index = np.zeros((100, 200), dtype=bool)
+        bin_index[5:95, 5:95] = True  # 90x90 block at 2 map units/cell
+        bin_index[10:13, 10:13] = False  # 9-cell hole -> filled
+        bin_index[40:50, 40:50] = False  # 100-cell hole -> kept
+
+        maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
+        features = maker.build_polygons(crs=CRS)
+
+        assert len(features) == 1
+        # cell = 1x1 map unit here (200 px canvas / 200 cells); the small
+        # hole is filled back in, the large one is subtracted
+        assert features[0].geometry().area() == pytest.approx(90 * 90 - 100)
+
+
+@pytest.mark.usefixtures("qgis_new_project")
 class TestSimplification:
     def test_staircase_boundary_is_thinned(self, canvas, polygon_maker_module):
         # a pixel staircase (lower-left triangle of cells): the raw
@@ -212,7 +262,7 @@ class TestSimplification:
         assert geometry.constGet().nCoordinates() <= 12
 
 
-@pytest.mark.usefixtures("native_processing", "qgis_new_project")
+@pytest.mark.usefixtures("qgis_new_project")
 class TestAddFeaturesToLayer:
     def test_returns_the_created_layer(self, canvas, polygon_maker_module):
         bin_index = np.zeros((10, 20), dtype=bool)
@@ -264,7 +314,7 @@ class TestAddFeaturesToLayer:
         assert layer.featureCount() == 2
 
 
-@pytest.mark.usefixtures("native_processing", "qgis_new_project")
+@pytest.mark.usefixtures("qgis_new_project")
 class TestMakePolygons:
     def test_creates_new_layer_with_polygon(self, canvas, polygon_maker_module):
         bin_index = np.zeros((10, 20), dtype=bool)
