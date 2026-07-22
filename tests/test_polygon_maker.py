@@ -1,5 +1,7 @@
 """Unit tests for PolygonMaker (requires a QGIS environment)."""
 
+import math
+
 import numpy as np
 import pytest
 from qgis.core import (
@@ -11,6 +13,24 @@ from qgis.core import (
 
 CRS = QgsCoordinateReferenceSystem("EPSG:3857")
 
+ROTATION = 30  # degrees, used by the rotated-canvas tests
+
+
+def rotated_envelope(width: float, height: float, rotation: float) -> QgsRectangle:
+    """Axis-aligned envelope of a width x height view centered on
+    (width/2, height/2) rotated by `rotation` degrees, as
+    QgsMapCanvas.visibleExtent() reports it for a rotated canvas."""
+    angle = math.radians(rotation)
+    env_width = width * abs(math.cos(angle)) + height * abs(math.sin(angle))
+    env_height = width * abs(math.sin(angle)) + height * abs(math.cos(angle))
+    center_x, center_y = width / 2, height / 2
+    return QgsRectangle(
+        center_x - env_width / 2,
+        center_y - env_height / 2,
+        center_x + env_width / 2,
+        center_y + env_height / 2,
+    )
+
 
 @pytest.fixture
 def canvas(qgis_app, polygon_maker_module):
@@ -19,6 +39,15 @@ def canvas(qgis_app, polygon_maker_module):
     # transforms unpredictable in headless tests).
     # 200x100 px grid showing a 200x100 map-unit extent -> 1 unit/px
     return polygon_maker_module.PixelGrid(200, 100, QgsRectangle(0, 0, 200, 100))
+
+
+@pytest.fixture
+def rotated_canvas(qgis_app, polygon_maker_module):
+    # the same 200x100 px grid at 1 unit/px, rotated by 30 degrees; the
+    # extent is the envelope of the rotated view, like visibleExtent()
+    return polygon_maker_module.PixelGrid(
+        200, 100, rotated_envelope(200, 100, ROTATION), rotation=ROTATION
+    )
 
 
 @pytest.fixture
@@ -43,6 +72,48 @@ class TestMakeRect:
 
         geo = maker.make_rect(0, 0, maker.size_multiply, count=2)
         assert geo.area() == pytest.approx(300)  # 3 cells wide
+
+
+class TestRotatedCanvas:
+    def test_map_units_per_pixel_ignores_envelope_growth(
+        self, rotated_canvas, polygon_maker_module
+    ):
+        # the rotated view's envelope is wider than 200 units, but the
+        # scale is still 1 unit/px
+        assert rotated_canvas.mapUnitsPerPixel() == pytest.approx(1.0)
+
+    def test_cell_area_is_preserved(self, rotated_canvas, polygon_maker_module):
+        bin_index = np.ones((10, 20), dtype=bool)
+        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
+
+        geo = maker.make_rect(0, 0, maker.size_multiply)
+        assert geo.area() == pytest.approx(100)  # 10x10 map units
+
+        geo = maker.make_rect(0, 0, maker.size_multiply, count=2)
+        assert geo.area() == pytest.approx(300)
+
+    def test_cell_is_rotated_not_axis_aligned(
+        self, rotated_canvas, polygon_maker_module
+    ):
+        bin_index = np.ones((10, 20), dtype=bool)
+        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
+
+        geo = maker.make_rect(0, 0, maker.size_multiply)
+        bounds = geo.boundingBox()
+        # a 10x10 cell rotated by 30 degrees has a wider envelope
+        expected = 10 * (
+            abs(math.cos(math.radians(ROTATION)))
+            + abs(math.sin(math.radians(ROTATION)))
+        )
+        assert bounds.width() == pytest.approx(expected)
+        assert bounds.height() == pytest.approx(expected)
+
+    def test_round_trip_matches_pixel(self, rotated_canvas):
+        transform = rotated_canvas.getCoordinateTransform()
+        map_point = transform.toMapCoordinatesF(30, 70)
+        device = transform.transform(map_point)
+        assert device.x() == pytest.approx(30)
+        assert device.y() == pytest.approx(70)
 
 
 class TestMakeRects:
@@ -108,6 +179,16 @@ class TestBuildPolygons:
         maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
 
         assert maker.build_polygons(crs=CRS) == []
+
+    def test_rotated_canvas_preserves_area(self, rotated_canvas, polygon_maker_module):
+        bin_index = np.zeros((10, 20), dtype=bool)
+        bin_index[2:8, 3:12] = True
+        maker = polygon_maker_module.PolygonMaker(rotated_canvas, bin_index)
+
+        features = maker.build_polygons(crs=CRS)
+
+        assert len(features) == 1
+        assert features[0].geometry().area() == pytest.approx(5400)
 
 
 @pytest.mark.usefixtures("native_processing", "qgis_new_project")

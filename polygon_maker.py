@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from qgis.core import (
@@ -32,16 +34,25 @@ class PixelGrid:
     Assumes square pixels.
     """
 
-    def __init__(self, width: int, height: int, extent: QgsRectangle):
+    def __init__(
+        self, width: int, height: int, extent: QgsRectangle, rotation: float = 0.0
+    ):
+        # `extent` is the axis-aligned envelope of the (possibly rotated)
+        # visible area, as QgsMapCanvas.visibleExtent() reports it: for a
+        # rotated view its width spans the rotated pixel grid's corners,
+        # not `width` pixels
         self._width = width
-        self._map_units_per_pixel = extent.width() / width
+        angle = math.radians(rotation)
+        self._map_units_per_pixel = extent.width() / (
+            width * abs(math.cos(angle)) + height * abs(math.sin(angle))
+        )
         self._transform = QgsMapToPixel(
             self._map_units_per_pixel,
             extent.center().x(),
             extent.center().y(),
             width,
             height,
-            0,
+            rotation,
         )
 
     def width(self) -> int:
@@ -149,20 +160,25 @@ class PolygonMaker:
     def make_rect(
         self, x: int, y: int, size_multiply: float, count: int = 0
     ) -> QgsGeometry:
-        point_top_left = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
-            x * size_multiply, y * size_multiply
-        )
-        point_bottom_right = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
-            (x + count + 1) * size_multiply, (y + 1) * size_multiply
-        )
+        # transform all four pixel corners: with a rotated canvas the
+        # cell is a rotated quad in map coordinates, so an axis-aligned
+        # rectangle between two transformed corners would be distorted
+        to_map = self.map_canvas.getCoordinateTransform().toMapCoordinatesF
+        left = x * size_multiply
+        top = y * size_multiply
+        right = (x + count + 1) * size_multiply
+        bottom = (y + 1) * size_multiply
 
-        return QgsGeometry.fromRect(
-            QgsRectangle(
-                point_top_left.x(),
-                point_top_left.y(),
-                point_bottom_right.x(),
-                point_bottom_right.y(),
-            )
+        return QgsGeometry.fromPolygonXY(
+            [
+                [
+                    to_map(left, top),
+                    to_map(right, top),
+                    to_map(right, bottom),
+                    to_map(left, bottom),
+                    to_map(left, top),
+                ]
+            ]
         )
 
     def make_rects(self) -> list[QgsFeature]:
