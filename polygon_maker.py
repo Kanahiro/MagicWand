@@ -2,7 +2,6 @@ import heapq
 import math
 
 import numpy as np
-from osgeo import gdal, ogr
 
 from qgis.core import (
     Qgis,
@@ -102,38 +101,176 @@ def add_features_to_layer(
     return output
 
 
-def polygonize_mask(mask: np.ndarray) -> list[list[np.ndarray]]:
-    """Trace the boundaries of a binary mask (GDAL polygonize).
+def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
+    """4-connected component labeling of a binary mask.
+
+    Returns (labels, count) where labels holds 1..count per component
+    and 0 for background. Works on horizontal runs of True cells with
+    union-find (like ImageAnalyzer.flood_fill_components), so the cost
+    scales with the number of runs, not the number of cells.
+    """
+    height, width = mask.shape
+    labels = np.zeros((height, width), dtype=np.int32)
+
+    parent: list[int] = []
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        root_a = find(a)
+        root_b = find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    rows = []
+    prev_starts = prev_ends = prev_ids = None
+    for y in range(height):
+        diff = np.diff(mask[y].astype(np.int8), prepend=0, append=0)
+        starts = np.flatnonzero(diff == 1)
+        ends = np.flatnonzero(diff == -1)  # exclusive
+        ids = list(range(len(parent), len(parent) + len(starts)))
+        parent.extend(ids)
+        rows.append((y, starts, ends, ids))
+
+        # merge runs overlapping a run in the previous row (4-connectivity)
+        if prev_starts is not None:
+            i = j = 0
+            while i < len(starts) and j < len(prev_starts):
+                if starts[i] < prev_ends[j] and prev_starts[j] < ends[i]:
+                    union(ids[i], prev_ids[j])
+                if ends[i] < prev_ends[j]:
+                    i += 1
+                else:
+                    j += 1
+        prev_starts, prev_ends, prev_ids = starts, ends, ids
+
+    root_to_label: dict[int, int] = {}
+    for y, starts, ends, ids in rows:
+        for k in range(len(ids)):
+            root = find(ids[k])
+            label = root_to_label.setdefault(root, len(root_to_label) + 1)
+            labels[y, starts[k] : ends[k]] = label
+    return labels, len(root_to_label)
+
+
+# boundary edge directions, clockwise with the region cells on the
+# right-hand side (x right, y down): East, South, West, North
+EDGE_DIRECTIONS = np.array([(1, 0), (0, 1), (-1, 0), (0, -1)], dtype=np.int64)
+
+
+def polygonize_mask(mask: np.ndarray, min_cells: int = 0) -> list[list[np.ndarray]]:
+    """Trace the boundaries of a binary mask.
 
     Returns one entry per 4-connected region of True cells: a list of
     rings, exterior first, each a closed (N, 2) float array of ring
     vertices in cell coordinates (x right, y down, cell corners on
-    integers).
+    integers). Regions covering fewer than `min_cells` cells are
+    skipped before tracing.
+
+    Boundary edges are walked with the region on the right; where two
+    regions (or two holes) touch diagonally the walk takes the
+    rightmost turn, keeping them separate to match the 4-connectivity
+    of the flood fill that produced the mask.
     """
     height, width = mask.shape
-    raster = gdal.GetDriverByName("MEM").Create("", width, height, 1, gdal.GDT_Byte)
-    # identity geotransform: polygon coordinates are cell corners
-    raster.SetGeoTransform((0, 1, 0, 0, 0, 1))
-    band = raster.GetRasterBand(1)
-    band.WriteArray(mask.astype(np.uint8))
+    labels, count = label_components(mask)
+    if count == 0:
+        return []
+    if min_cells:
+        sizes = np.bincount(labels.ravel())
+        sizes[0] = 0
+        mask = (sizes >= min_cells)[labels]
+        if not mask.any():
+            return []
 
-    vector = ogr.GetDriverByName("Memory").CreateDataSource("")
-    layer = vector.CreateLayer("mask", None, ogr.wkbPolygon)
-    layer.CreateField(ogr.FieldDefn("value", ogr.OFTInteger))
-    # the band doubles as its own mask, so False cells produce no
-    # feature at all; 4-connectivity (the default) matches the
-    # 4-connected flood fill that produced the mask
-    gdal.Polygonize(band, band, layer, 0)
+    padded = np.zeros((height + 2, width + 2), dtype=bool)
+    padded[1:-1, 1:-1] = mask
+    inner = padded[1:-1, 1:-1]
 
-    polygons = []
-    for feature in layer:
-        geometry = feature.GetGeometryRef()
-        rings = [
-            np.array(geometry.GetGeometryRef(i).GetPoints(), dtype=np.float64)[:, :2]
-            for i in range(geometry.GetGeometryCount())
-        ]
-        polygons.append(rings)
-    return polygons
+    # one directed edge per cell side facing background; (dx, dy) is the
+    # start-vertex offset from the cell's top-left corner and (bx, by)
+    # the offset of the background cell across the edge
+    edge_specs = [
+        (inner & ~padded[:-2, 1:-1], 0, 0, 0, 0, -1),  # north side, heading East
+        (inner & ~padded[1:-1, 2:], 1, 1, 0, 1, 0),  # east side, heading South
+        (inner & ~padded[2:, 1:-1], 2, 1, 1, 0, 1),  # south side, heading West
+        (inner & ~padded[1:-1, :-2], 3, 0, 1, -1, 0),  # west side, heading North
+    ]
+    start_x, start_y, direction, owner, across = [], [], [], [], []
+    for sides, code, dx, dy, bx, by in edge_specs:
+        ys, xs = np.nonzero(sides)
+        start_x.append(xs + dx)
+        start_y.append(ys + dy)
+        direction.append(np.full(len(xs), code, dtype=np.int8))
+        owner.append(labels[ys, xs])
+        # id of the background cell this edge faces (padded coordinates,
+        # so border cells stay in range)
+        across.append((ys + by + 1) * (width + 2) + (xs + bx + 1))
+    start_x = np.concatenate(start_x)
+    start_y = np.concatenate(start_y)
+    direction = np.concatenate(direction)
+    owner = np.concatenate(owner)
+    across = np.concatenate(across)
+    edge_count = len(start_x)
+    if edge_count == 0:
+        return []
+
+    # vertex ids on the (width+1) x (height+1) grid of cell corners
+    steps = EDGE_DIRECTIONS[direction]
+    end_key = (start_y + steps[:, 1]) * (width + 1) + (start_x + steps[:, 0])
+    start_key = start_y * (width + 1) + start_x
+
+    outgoing: dict[int, list[int]] = {}
+    for edge in range(edge_count):
+        outgoing.setdefault(int(start_key[edge]), []).append(edge)
+
+    visited = np.zeros(edge_count, dtype=bool)
+    regions: dict[int, dict[str, list]] = {}
+    for first in range(edge_count):
+        if visited[first]:
+            continue
+        vertices = []
+        edge = first
+        while not visited[edge]:
+            visited[edge] = True
+            vertices.append((start_x[edge], start_y[edge]))
+            candidates = outgoing[int(end_key[edge])]
+            if len(candidates) == 1:
+                edge = candidates[0]
+            else:
+                # checkerboard corner: two boundaries pass through this
+                # vertex. Where two *regions* touch diagonally, continue
+                # along the same component (keeps them separate, matching
+                # the 4-connected flood fill); within one component (two
+                # holes, or a hole meeting the outside), continue along
+                # the same background cell so each ring stays simple
+                # instead of merging into a self-touching figure eight.
+                same_label = [c for c in candidates if owner[c] == owner[edge]]
+                if len(same_label) == 1:
+                    edge = same_label[0]
+                else:
+                    edge = next(c for c in candidates if across[c] == across[edge])
+
+        ring = np.array(vertices, dtype=np.float64)
+        # drop collinear vertices (consecutive unit steps merge)
+        forward = np.roll(ring, -1, axis=0) - ring
+        backward = ring - np.roll(ring, 1, axis=0)
+        corner = backward[:, 0] * forward[:, 1] != backward[:, 1] * forward[:, 0]
+        ring = ring[corner]
+        ring = np.vstack([ring, ring[:1]])
+
+        region = regions.setdefault(int(owner[first]), {"outer": [], "holes": []})
+        # traced clockwise (region on the right), exterior rings have
+        # positive shoelace area in y-down coordinates, holes negative
+        x, y = ring[:, 0], ring[:, 1]
+        signed_area = float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1])) / 2
+        region["outer" if signed_area > 0 else "holes"].append(ring)
+
+    return [region["outer"] + region["holes"] for region in regions.values()]
 
 
 def ring_area(ring: np.ndarray) -> float:
@@ -203,9 +340,8 @@ class PolygonMaker:
         transform (including a rotated canvas) applies uniformly.
         """
         features = []
-        for rings in polygonize_mask(self.bin_index):
-            if ring_area(rings[0]) < NOISE_CELLS:
-                continue  # speck
+        # specks below the noise threshold are skipped before tracing
+        for rings in polygonize_mask(self.bin_index, min_cells=NOISE_CELLS):
             kept_rings = [
                 simplify_ring(ring, SIMPLIFY_TOLERANCE_CELLS**2)
                 for ring in rings

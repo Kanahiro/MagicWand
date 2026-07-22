@@ -109,6 +109,29 @@ class TestPolygonizeMask:
 
         assert len(polygons) == 2
 
+    def test_diagonal_holes_stay_separate_rings(self, polygon_maker_module):
+        mask = np.ones((6, 6), dtype=bool)
+        mask[2, 2] = False
+        mask[3, 3] = False  # touches the first hole only at a corner
+
+        polygons = polygon_maker_module.polygonize_mask(mask)
+
+        assert len(polygons) == 1
+        rings = polygons[0]
+        assert len(rings) == 3  # exterior + two one-cell holes
+        assert polygon_maker_module.ring_area(rings[1]) == pytest.approx(1)
+        assert polygon_maker_module.ring_area(rings[2]) == pytest.approx(1)
+
+    def test_min_cells_skips_small_regions(self, polygon_maker_module):
+        mask = np.zeros((10, 20), dtype=bool)
+        mask[1:4, 1:4] = True  # 9 cells
+        mask[5:9, 5:17] = True  # 48 cells
+
+        polygons = polygon_maker_module.polygonize_mask(mask, min_cells=40)
+
+        assert len(polygons) == 1
+        assert polygon_maker_module.ring_area(polygons[0][0]) == pytest.approx(48)
+
     def test_empty_mask(self, polygon_maker_module):
         mask = np.zeros((10, 20), dtype=bool)
 
