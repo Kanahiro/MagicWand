@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from qgis.core import (
@@ -6,21 +8,39 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsMapToPixel,
+    QgsMapToPixelSimplifier,
+    QgsPointXY,
     QgsProject,
     QgsRectangle,
     QgsVectorLayer,
 )
-from qgis import processing
 
 POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 
 # vertex thinning tolerance, in mask-cell sizes. Simplification is
 # area-based (Visvalingam-Whyatt): a pixel staircase is a run of tiny
-# triangles of half a cell's area, so a threshold of one cell removes
-# them reliably while real corners (much larger triangles) survive —
-# unlike distance-based Douglas-Peucker, which clips corners depending
-# on where the ring happens to start
+# triangles of half a cell's area, so an effective area threshold of one
+# square cell removes them reliably while real corners (much larger
+# triangles) survive — unlike distance-based Douglas-Peucker, which
+# clips corners depending on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
+
+# unscoped in QGIS 3 builds, scoped in QGIS 4 builds
+SIMPLIFY_GEOMETRY_FLAG = getattr(QgsMapToPixelSimplifier, "SimplifyGeometry", None)
+if SIMPLIFY_GEOMETRY_FLAG is None:
+    SIMPLIFY_GEOMETRY_FLAG = (
+        Qgis.VectorRenderingSimplificationFlag.GeometrySimplification
+    )
+VISVALINGAM = getattr(QgsMapToPixelSimplifier, "Visvalingam", None)
+if VISVALINGAM is None:
+    VISVALINGAM = Qgis.VectorSimplificationAlgorithm.Visvalingam
+
+# holes smaller than this many mask cells are noise and get filled:
+# labels, anti-aliasing and color noise inside a selected region punch
+# many small holes that the color model cannot include. The selection
+# itself is never dropped, however small — the mask is flood-filled
+# from the clicked points, so every region is something the user chose
+NOISE_CELLS = 40
 
 
 class PixelGrid:
@@ -32,16 +52,25 @@ class PixelGrid:
     Assumes square pixels.
     """
 
-    def __init__(self, width: int, height: int, extent: QgsRectangle):
+    def __init__(
+        self, width: int, height: int, extent: QgsRectangle, rotation: float = 0.0
+    ):
+        # `extent` is the axis-aligned envelope of the (possibly rotated)
+        # visible area, as QgsMapCanvas.visibleExtent() reports it: for a
+        # rotated view its width spans the rotated pixel grid's corners,
+        # not `width` pixels
         self._width = width
-        self._map_units_per_pixel = extent.width() / width
+        angle = math.radians(rotation)
+        self._map_units_per_pixel = extent.width() / (
+            width * abs(math.cos(angle)) + height * abs(math.sin(angle))
+        )
         self._transform = QgsMapToPixel(
             self._map_units_per_pixel,
             extent.center().x(),
             extent.center().y(),
             width,
             height,
-            0,
+            rotation,
         )
 
     def width(self) -> int:
@@ -86,56 +115,221 @@ def add_features_to_layer(
     return output
 
 
+def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
+    """4-connected component labeling of a binary mask.
+
+    Returns (labels, count) where labels holds 1..count per component
+    and 0 for background. Works on horizontal runs of True cells with
+    union-find (like ImageAnalyzer.flood_fill_components), so the cost
+    scales with the number of runs, not the number of cells.
+    """
+    height, width = mask.shape
+    labels = np.zeros((height, width), dtype=np.int32)
+
+    parent: list[int] = []
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        root_a = find(a)
+        root_b = find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    rows = []
+    prev_starts = prev_ends = prev_ids = None
+    for y in range(height):
+        diff = np.diff(mask[y].astype(np.int8), prepend=0, append=0)
+        starts = np.flatnonzero(diff == 1)
+        ends = np.flatnonzero(diff == -1)  # exclusive
+        ids = list(range(len(parent), len(parent) + len(starts)))
+        parent.extend(ids)
+        rows.append((y, starts, ends, ids))
+
+        # merge runs overlapping a run in the previous row (4-connectivity)
+        if prev_starts is not None:
+            i = j = 0
+            while i < len(starts) and j < len(prev_starts):
+                if starts[i] < prev_ends[j] and prev_starts[j] < ends[i]:
+                    union(ids[i], prev_ids[j])
+                if ends[i] < prev_ends[j]:
+                    i += 1
+                else:
+                    j += 1
+        prev_starts, prev_ends, prev_ids = starts, ends, ids
+
+    root_to_label: dict[int, int] = {}
+    for y, starts, ends, ids in rows:
+        for k in range(len(ids)):
+            root = find(ids[k])
+            label = root_to_label.setdefault(root, len(root_to_label) + 1)
+            labels[y, starts[k] : ends[k]] = label
+    return labels, len(root_to_label)
+
+
+# boundary edge directions, clockwise with the region cells on the
+# right-hand side (x right, y down): East, South, West, North
+EDGE_DIRECTIONS = np.array([(1, 0), (0, 1), (-1, 0), (0, -1)], dtype=np.int64)
+
+
+def polygonize_mask(mask: np.ndarray) -> list[list[np.ndarray]]:
+    """Trace the boundaries of a binary mask.
+
+    Returns one entry per 4-connected region of True cells: a list of
+    rings, exterior first, each a closed (N, 2) float array of ring
+    vertices in cell coordinates (x right, y down, cell corners on
+    integers).
+
+    Boundary edges are walked with the region on the right; where two
+    regions (or two holes) touch diagonally the walk keeps them
+    separate, matching the 4-connectivity of the flood fill that
+    produced the mask.
+    """
+    height, width = mask.shape
+    labels, count = label_components(mask)
+    if count == 0:
+        return []
+
+    padded = np.zeros((height + 2, width + 2), dtype=bool)
+    padded[1:-1, 1:-1] = mask
+    inner = padded[1:-1, 1:-1]
+
+    # one directed edge per cell side facing background; (dx, dy) is the
+    # start-vertex offset from the cell's top-left corner and (bx, by)
+    # the offset of the background cell across the edge
+    edge_specs = [
+        (inner & ~padded[:-2, 1:-1], 0, 0, 0, 0, -1),  # north side, heading East
+        (inner & ~padded[1:-1, 2:], 1, 1, 0, 1, 0),  # east side, heading South
+        (inner & ~padded[2:, 1:-1], 2, 1, 1, 0, 1),  # south side, heading West
+        (inner & ~padded[1:-1, :-2], 3, 0, 1, -1, 0),  # west side, heading North
+    ]
+    start_x, start_y, direction, owner, across = [], [], [], [], []
+    for sides, code, dx, dy, bx, by in edge_specs:
+        ys, xs = np.nonzero(sides)
+        start_x.append(xs + dx)
+        start_y.append(ys + dy)
+        direction.append(np.full(len(xs), code, dtype=np.int8))
+        owner.append(labels[ys, xs])
+        # id of the background cell this edge faces (padded coordinates,
+        # so border cells stay in range)
+        across.append((ys + by + 1) * (width + 2) + (xs + bx + 1))
+    start_x = np.concatenate(start_x)
+    start_y = np.concatenate(start_y)
+    direction = np.concatenate(direction)
+    owner = np.concatenate(owner)
+    across = np.concatenate(across)
+    edge_count = len(start_x)
+    if edge_count == 0:
+        return []
+
+    # vertex ids on the (width+1) x (height+1) grid of cell corners
+    steps = EDGE_DIRECTIONS[direction]
+    end_key = (start_y + steps[:, 1]) * (width + 1) + (start_x + steps[:, 0])
+    start_key = start_y * (width + 1) + start_x
+
+    outgoing: dict[int, list[int]] = {}
+    for edge in range(edge_count):
+        outgoing.setdefault(int(start_key[edge]), []).append(edge)
+
+    visited = np.zeros(edge_count, dtype=bool)
+    regions: dict[int, dict[str, list]] = {}
+    for first in range(edge_count):
+        if visited[first]:
+            continue
+        vertices = []
+        edge = first
+        while not visited[edge]:
+            visited[edge] = True
+            vertices.append((start_x[edge], start_y[edge]))
+            candidates = outgoing[int(end_key[edge])]
+            if len(candidates) == 1:
+                edge = candidates[0]
+            else:
+                # checkerboard corner: two boundaries pass through this
+                # vertex. Where two *regions* touch diagonally, continue
+                # along the same component (keeps them separate, matching
+                # the 4-connected flood fill); within one component (two
+                # holes, or a hole meeting the outside), continue along
+                # the same background cell so each ring stays simple
+                # instead of merging into a self-touching figure eight.
+                same_label = [c for c in candidates if owner[c] == owner[edge]]
+                if len(same_label) == 1:
+                    edge = same_label[0]
+                else:
+                    edge = next(c for c in candidates if across[c] == across[edge])
+
+        ring = np.array(vertices, dtype=np.float64)
+        # drop collinear vertices (consecutive unit steps merge)
+        forward = np.roll(ring, -1, axis=0) - ring
+        backward = ring - np.roll(ring, 1, axis=0)
+        corner = backward[:, 0] * forward[:, 1] != backward[:, 1] * forward[:, 0]
+        ring = ring[corner]
+        ring = np.vstack([ring, ring[:1]])
+
+        region = regions.setdefault(int(owner[first]), {"outer": [], "holes": []})
+        # traced clockwise (region on the right), exterior rings have
+        # positive shoelace area in y-down coordinates, holes negative
+        x, y = ring[:, 0], ring[:, 1]
+        signed_area = float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1])) / 2
+        region["outer" if signed_area > 0 else "holes"].append(ring)
+
+    return [region["outer"] + region["holes"] for region in regions.values()]
+
+
+def ring_area(ring: np.ndarray) -> float:
+    """Unsigned shoelace area of a closed (N, 2) ring."""
+    x, y = ring[:, 0], ring[:, 1]
+    return abs(float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]))) / 2
+
+
 class PolygonMaker:
     def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
         self.map_canvas = canvas
         self.size_multiply = self.map_canvas.width() / self.bin_index.shape[1]
-        self.minimum_area = self.make_rect(0, 0, self.size_multiply).area()
-        self.noise_multiply = 40
 
     def build_polygons(self, crs: QgsCoordinateReferenceSystem) -> list[QgsFeature]:
-        """Run the full pipeline and return the resulting features
-        without touching the project."""
-        rects = self.make_rects()
-        if not rects:
-            return []
-        rects_layer = self.make_layer_by(rects, crs)
+        """Polygonize the mask and return the resulting features without
+        touching the project.
 
-        dissolved_layer = processing.run(
-            "native:dissolve", {"INPUT": rects_layer, "OUTPUT": "memory:"}
-        )["OUTPUT"]
-        single_part_layer = processing.run(
-            "native:multiparttosingleparts",
-            {"INPUT": dissolved_layer, "OUTPUT": "memory:"},
-        )["OUTPUT"]
-        single_features = single_part_layer.getFeatures()
+        The whole pipeline — boundary tracing, noise and hole removal,
+        vertex thinning — runs in mask-cell coordinates; only the final
+        vertices are transformed to map coordinates, so any pixel->map
+        transform (including a rotated canvas) applies uniformly.
+        """
+        # QGIS's Visvalingam-Whyatt implementation treats the tolerance
+        # as a length whose square is the triangle-area threshold, and
+        # area-based thinning is rotation-invariant, so a tolerance of
+        # one cell's map size works on the transformed geometry
+        cell_size = self.size_multiply * self.map_canvas.mapUnitsPerPixel()
+        simplifier = QgsMapToPixelSimplifier(
+            SIMPLIFY_GEOMETRY_FLAG, cell_size * SIMPLIFY_TOLERANCE_CELLS, VISVALINGAM
+        )
 
-        denoised_features = self.noise_reduction(single_features, self.noise_multiply)
-        if not denoised_features:
-            return []
-        denoised_layer = self.make_layer_by(denoised_features, crs)
+        features = []
+        for rings in polygonize_mask(self.bin_index):
+            kept_rings = [
+                ring
+                for ring in rings
+                # small holes are noise (labels, anti-aliasing) — fill them
+                if ring is rings[0] or ring_area(ring) >= NOISE_CELLS
+            ]
+            geometry = QgsGeometry.fromPolygonXY(
+                [self.ring_to_map(ring) for ring in kept_rings]
+            )
+            feature = QgsFeature()
+            feature.setGeometry(simplifier.simplify(geometry))
+            features.append(feature)
+        return features
 
-        cell_size = self.minimum_area**0.5
-        simplified_layer = processing.run(
-            "native:simplifygeometries",
-            {
-                "INPUT": denoised_layer,
-                "METHOD": 2,  # area-based (Visvalingam-Whyatt)
-                "TOLERANCE": cell_size * SIMPLIFY_TOLERANCE_CELLS,
-                "OUTPUT": "memory:",
-            },
-        )["OUTPUT"]
-        cleaned_layer = processing.run(
-            "native:deleteholes",
-            {
-                "INPUT": simplified_layer,
-                # holes and specks share the same area threshold
-                "MIN_AREA": self.minimum_area * self.noise_multiply,
-                "OUTPUT": "memory:",
-            },
-        )["OUTPUT"]
-        return list(cleaned_layer.getFeatures())
+    def ring_to_map(self, ring: np.ndarray) -> list[QgsPointXY]:
+        """Transform a ring from cell coordinates to map coordinates."""
+        to_map = self.map_canvas.getCoordinateTransform().toMapCoordinatesF
+        return [to_map(x * self.size_multiply, y * self.size_multiply) for x, y in ring]
 
     def make_polygons(
         self, crs: QgsCoordinateReferenceSystem, layer_id: str | None = None
@@ -144,84 +338,3 @@ class PolygonMaker:
         if not cleaned_features:
             return
         add_features_to_layer(cleaned_features, crs, layer_id)
-
-    # make rectangle geometry by pointXY on Pixels
-    def make_rect(
-        self, x: int, y: int, size_multiply: float, count: int = 0
-    ) -> QgsGeometry:
-        point_top_left = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
-            x * size_multiply, y * size_multiply
-        )
-        point_bottom_right = self.map_canvas.getCoordinateTransform().toMapCoordinatesF(
-            (x + count + 1) * size_multiply, (y + 1) * size_multiply
-        )
-
-        return QgsGeometry.fromRect(
-            QgsRectangle(
-                point_top_left.x(),
-                point_top_left.y(),
-                point_bottom_right.x(),
-                point_bottom_right.y(),
-            )
-        )
-
-    def make_rects(self) -> list[QgsFeature]:
-        # make 2d array including only TRUE pixel index
-        # true_points[0]:y axis indexes
-        # true_points[1]:x axis indexes
-        true_points = np.where(self.bin_index)
-
-        # rectangle making sequence
-        geos = []
-        # when neighbor pixel also true, incliment this count
-        connected_count = 0
-        for i in range(len(true_points[0])):
-            # skip loops same number to the count
-            if connected_count > 0:
-                connected_count -= 1
-                continue
-
-            x = true_points[1][i]
-            y = true_points[0][i]
-
-            # when the final loop
-            if i >= len(true_points[0]) - 1:
-                geos.append(self.make_rect(x, y, self.size_multiply))
-                break
-
-            # calculate connected_count
-            while (
-                true_points[1][i + connected_count + 1]
-                - true_points[1][i + connected_count]
-                == 1
-            ):
-                connected_count += 1
-                if i + connected_count + 1 >= len(true_points[0]) - 1:
-                    break
-
-            geos.append(self.make_rect(x, y, self.size_multiply, connected_count))
-
-        rects = []
-        for geo in geos:
-            rect = QgsFeature()
-            rect.setGeometry(geo)
-            rects.append(rect)
-        return rects
-
-    def make_layer_by(
-        self, features: list[QgsFeature], crs: QgsCoordinateReferenceSystem
-    ) -> QgsVectorLayer:
-        features_layer = QgsVectorLayer(
-            f"Polygon?crs={crs.authid()}", "magic_wand", "memory"
-        )
-        features_layer.dataProvider().addFeatures(features)
-        features_layer.updateExtents()
-        return features_layer
-
-    def noise_reduction(self, features, noise_multiply: float) -> list[QgsFeature]:
-        """Drop features smaller than `noise_multiply` mask cells."""
-        return [
-            feature
-            for feature in features
-            if feature.geometry().area() >= self.minimum_area * noise_multiply
-        ]

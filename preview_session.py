@@ -73,6 +73,7 @@ class PreviewSession:
             image.width(),
             image.height(),
             self.canvas.mapSettings().visibleExtent(),
+            rotation=self.canvas.mapSettings().rotation(),
         )
         self.crs = QgsProject.instance().crs()
         self.seeds: list[QgsPointXY] = []
