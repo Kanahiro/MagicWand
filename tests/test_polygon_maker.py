@@ -122,16 +122,6 @@ class TestPolygonizeMask:
         assert polygon_maker_module.ring_area(rings[1]) == pytest.approx(1)
         assert polygon_maker_module.ring_area(rings[2]) == pytest.approx(1)
 
-    def test_min_cells_skips_small_regions(self, polygon_maker_module):
-        mask = np.zeros((10, 20), dtype=bool)
-        mask[1:4, 1:4] = True  # 9 cells
-        mask[5:9, 5:17] = True  # 48 cells
-
-        polygons = polygon_maker_module.polygonize_mask(mask, min_cells=40)
-
-        assert len(polygons) == 1
-        assert polygon_maker_module.ring_area(polygons[0][0]) == pytest.approx(48)
-
     def test_empty_mask(self, polygon_maker_module):
         mask = np.zeros((10, 20), dtype=bool)
 
@@ -236,16 +226,17 @@ class TestBuildPolygons:
         assert len(features) == 1
         assert features[0].geometry().area() == pytest.approx(5400)
 
-    def test_small_specks_are_dropped(self, canvas, polygon_maker_module):
+    def test_small_regions_are_kept(self, canvas, polygon_maker_module):
+        # the mask is flood-filled from the user's clicks, so even a tiny
+        # region is a deliberate selection — nothing is dropped by size
         bin_index = np.zeros((10, 20), dtype=bool)
-        bin_index[2:8, 3:12] = True  # 54 cells, above the noise threshold
-        bin_index[0, 15:18] = True  # 3-cell speck
+        bin_index[2:5, 3:5] = True  # 6 cells
 
         maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
         features = maker.build_polygons(crs=CRS)
 
         assert len(features) == 1
-        assert features[0].geometry().area() == pytest.approx(5400)
+        assert features[0].geometry().area() == pytest.approx(600)
 
     def test_small_holes_are_filled_large_holes_survive(
         self, canvas, polygon_maker_module
@@ -341,7 +332,7 @@ class TestAddFeaturesToLayer:
 class TestMakePolygons:
     def test_creates_new_layer_with_polygon(self, canvas, polygon_maker_module):
         bin_index = np.zeros((10, 20), dtype=bool)
-        bin_index[2:8, 3:12] = True  # 6x9 = 54 cells > noise threshold (40)
+        bin_index[2:8, 3:12] = True  # 6x9 = 54 cells
         maker = polygon_maker_module.PolygonMaker(canvas, bin_index)
 
         maker.make_polygons(crs=CRS)

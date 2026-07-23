@@ -25,7 +25,11 @@ POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 # clips corners depending on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
 
-# features and holes smaller than this many mask cells are noise
+# holes smaller than this many mask cells are noise and get filled:
+# labels, anti-aliasing and color noise inside a selected region punch
+# many small holes that the color model cannot include. The selection
+# itself is never dropped, however small — the mask is flood-filled
+# from the clicked points, so every region is something the user chose
 NOISE_CELLS = 40
 
 
@@ -162,30 +166,23 @@ def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
 EDGE_DIRECTIONS = np.array([(1, 0), (0, 1), (-1, 0), (0, -1)], dtype=np.int64)
 
 
-def polygonize_mask(mask: np.ndarray, min_cells: int = 0) -> list[list[np.ndarray]]:
+def polygonize_mask(mask: np.ndarray) -> list[list[np.ndarray]]:
     """Trace the boundaries of a binary mask.
 
     Returns one entry per 4-connected region of True cells: a list of
     rings, exterior first, each a closed (N, 2) float array of ring
     vertices in cell coordinates (x right, y down, cell corners on
-    integers). Regions covering fewer than `min_cells` cells are
-    skipped before tracing.
+    integers).
 
     Boundary edges are walked with the region on the right; where two
-    regions (or two holes) touch diagonally the walk takes the
-    rightmost turn, keeping them separate to match the 4-connectivity
-    of the flood fill that produced the mask.
+    regions (or two holes) touch diagonally the walk keeps them
+    separate, matching the 4-connectivity of the flood fill that
+    produced the mask.
     """
     height, width = mask.shape
     labels, count = label_components(mask)
     if count == 0:
         return []
-    if min_cells:
-        sizes = np.bincount(labels.ravel())
-        sizes[0] = 0
-        mask = (sizes >= min_cells)[labels]
-        if not mask.any():
-            return []
 
     padded = np.zeros((height + 2, width + 2), dtype=bool)
     padded[1:-1, 1:-1] = mask
@@ -340,12 +337,11 @@ class PolygonMaker:
         transform (including a rotated canvas) applies uniformly.
         """
         features = []
-        # specks below the noise threshold are skipped before tracing
-        for rings in polygonize_mask(self.bin_index, min_cells=NOISE_CELLS):
+        for rings in polygonize_mask(self.bin_index):
             kept_rings = [
                 simplify_ring(ring, SIMPLIFY_TOLERANCE_CELLS**2)
                 for ring in rings
-                # holes and specks share the same area threshold
+                # small holes are noise (labels, anti-aliasing) — fill them
                 if ring is rings[0] or ring_area(ring) >= NOISE_CELLS
             ]
             feature = QgsFeature()
