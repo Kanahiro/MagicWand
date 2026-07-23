@@ -8,7 +8,7 @@ qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Auto-making Polygon by MapCanvas
-version=2.1.0
+version=2.2.0
 author=Kanahiro Iguchi
 email=kanahiro.iguchi@gmail.com
 
@@ -21,7 +21,12 @@ repository=https://github.com/Kanahiro/MagicWand
 # Recommended items:
 
 hasProcessingProvider=yes
-changelog=2.1.0
+changelog=2.2.0
+    - Fix distorted polygons on a rotated map canvas: the pixel-to-map transform now carries the canvas rotation, both for the created geometry and for the preview seed points
+    - Rewrite polygonization to trace the selection boundary directly (component labeling + boundary walking in numpy) instead of dissolving one rectangle per pixel run, making preview updates roughly 3-30x faster and dropping the processing-framework dependency
+    - Small selections are no longer silently discarded: the minimum-size filter predated the flood-fill selection and could only ever drop a deliberately clicked small feature; filling of small holes (labels, anti-aliasing) is unchanged
+    - Vertex thinning now uses QGIS's Visvalingam-Whyatt implementation (QgsMapToPixelSimplifier) directly on the geometry
+    2.1.0
     - Replace the confirmation dialog with an in-canvas preview flow: right-click to show the tentative polygon (each further right click adds a seed point), left-click to confirm and save, Escape to discard
     - The Color Threshold slider in the dock widget updates the tentative polygon live while previewing
     - Backspace while previewing undoes the latest seed point (undoing the only one discards the preview)
