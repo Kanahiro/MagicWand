@@ -1,4 +1,3 @@
-import heapq
 import math
 
 import numpy as np
@@ -9,6 +8,7 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsMapToPixel,
+    QgsMapToPixelSimplifier,
     QgsPointXY,
     QgsProject,
     QgsRectangle,
@@ -24,6 +24,16 @@ POLYGON_GEOMETRY = Qgis.GeometryType.Polygon
 # triangles) survive — unlike distance-based Douglas-Peucker, which
 # clips corners depending on where the ring happens to start
 SIMPLIFY_TOLERANCE_CELLS = 1.0
+
+# unscoped in QGIS 3 builds, scoped in QGIS 4 builds
+SIMPLIFY_GEOMETRY_FLAG = getattr(QgsMapToPixelSimplifier, "SimplifyGeometry", None)
+if SIMPLIFY_GEOMETRY_FLAG is None:
+    SIMPLIFY_GEOMETRY_FLAG = (
+        Qgis.VectorRenderingSimplificationFlag.GeometrySimplification
+    )
+VISVALINGAM = getattr(QgsMapToPixelSimplifier, "Visvalingam", None)
+if VISVALINGAM is None:
+    VISVALINGAM = Qgis.VectorSimplificationAlgorithm.Visvalingam
 
 # holes smaller than this many mask cells are noise and get filled:
 # labels, anti-aliasing and color noise inside a selected region punch
@@ -276,51 +286,6 @@ def ring_area(ring: np.ndarray) -> float:
     return abs(float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]))) / 2
 
 
-def simplify_ring(ring: np.ndarray, min_triangle_area: float) -> np.ndarray:
-    """Thin a closed ring with Visvalingam-Whyatt simplification.
-
-    Repeatedly removes the vertex spanning the smallest triangle with
-    its neighbors while that area is below `min_triangle_area`, never
-    reducing the ring below a triangle.
-    """
-    points = ring[:-1]  # drop the closing vertex, treat as circular
-    n = len(points)
-    if n <= 3:
-        return ring
-
-    prev = np.roll(np.arange(n), 1)
-    next_ = np.roll(np.arange(n), -1)
-    alive = np.ones(n, dtype=bool)
-    alive_count = n
-
-    def triangle_area(i: int) -> float:
-        a, b, c = points[prev[i]], points[i], points[next_[i]]
-        return abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2
-
-    heap = [(triangle_area(i), i) for i in range(n)]
-    heapq.heapify(heap)
-
-    while heap and alive_count > 3:
-        area, i = heapq.heappop(heap)
-        if not alive[i]:
-            continue
-        if area != triangle_area(i):
-            # stale entry: neighbors changed since it was pushed
-            heapq.heappush(heap, (triangle_area(i), i))
-            continue
-        if area >= min_triangle_area:
-            break
-        alive[i] = False
-        alive_count -= 1
-        next_[prev[i]] = next_[i]
-        prev[next_[i]] = prev[i]
-        for j in (prev[i], next_[i]):
-            heapq.heappush(heap, (triangle_area(j), j))
-
-    kept = points[alive]
-    return np.vstack([kept, kept[:1]])
-
-
 class PolygonMaker:
     def __init__(self, canvas, bin_index: np.ndarray):
         self.bin_index = bin_index
@@ -336,20 +301,28 @@ class PolygonMaker:
         vertices are transformed to map coordinates, so any pixel->map
         transform (including a rotated canvas) applies uniformly.
         """
+        # QGIS's Visvalingam-Whyatt implementation treats the tolerance
+        # as a length whose square is the triangle-area threshold, and
+        # area-based thinning is rotation-invariant, so a tolerance of
+        # one cell's map size works on the transformed geometry
+        cell_size = self.size_multiply * self.map_canvas.mapUnitsPerPixel()
+        simplifier = QgsMapToPixelSimplifier(
+            SIMPLIFY_GEOMETRY_FLAG, cell_size * SIMPLIFY_TOLERANCE_CELLS, VISVALINGAM
+        )
+
         features = []
         for rings in polygonize_mask(self.bin_index):
             kept_rings = [
-                simplify_ring(ring, SIMPLIFY_TOLERANCE_CELLS**2)
+                ring
                 for ring in rings
                 # small holes are noise (labels, anti-aliasing) — fill them
                 if ring is rings[0] or ring_area(ring) >= NOISE_CELLS
             ]
-            feature = QgsFeature()
-            feature.setGeometry(
-                QgsGeometry.fromPolygonXY(
-                    [self.ring_to_map(ring) for ring in kept_rings]
-                )
+            geometry = QgsGeometry.fromPolygonXY(
+                [self.ring_to_map(ring) for ring in kept_rings]
             )
+            feature = QgsFeature()
+            feature.setGeometry(simplifier.simplify(geometry))
             features.append(feature)
         return features
 

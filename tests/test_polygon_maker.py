@@ -128,38 +128,6 @@ class TestPolygonizeMask:
         assert polygon_maker_module.polygonize_mask(mask) == []
 
 
-class TestSimplifyRing:
-    def test_staircase_collapses_to_diagonal(self, polygon_maker_module):
-        # right triangle drawn as a pixel staircase: the stair vertices
-        # span half-cell triangles, well below the one-cell threshold
-        mask = np.zeros((10, 20), dtype=bool)
-        for y in range(10):
-            mask[y, : y + 1] = True
-        (rings,) = polygon_maker_module.polygonize_mask(mask)
-        raw = rings[0]
-
-        thinned = polygon_maker_module.simplify_ring(raw, 1.0)
-
-        assert len(thinned) < len(raw) / 2
-        # area drifts by at most the removed half-cell triangles
-        assert polygon_maker_module.ring_area(thinned) == pytest.approx(55, rel=0.1)
-
-    def test_rectangle_corners_survive(self, polygon_maker_module):
-        ring = np.array([[0, 0], [10, 0], [10, 6], [0, 6], [0, 0]], dtype=np.float64)
-
-        thinned = polygon_maker_module.simplify_ring(ring, 1.0)
-
-        assert polygon_maker_module.ring_area(thinned) == pytest.approx(60)
-        assert len(thinned) == 5
-
-    def test_never_collapses_below_a_triangle(self, polygon_maker_module):
-        ring = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], dtype=np.float64)
-
-        thinned = polygon_maker_module.simplify_ring(ring, 1e9)
-
-        assert len(thinned) >= 4  # triangle + closing vertex
-
-
 class TestRotatedCanvas:
     def test_map_units_per_pixel_ignores_envelope_growth(self, rotated_canvas):
         # the rotated view's envelope is wider than 200 units, but the
